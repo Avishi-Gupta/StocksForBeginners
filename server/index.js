@@ -149,17 +149,18 @@ app.get('/api/event-impact', async (req, res) => {
 
   try {
     let headlines = [];
+    const articleQuery = buildEventArticleQuery(rawTopic, marketFocus);
 
     try {
       const historyNewsData = await runTinyFishAutomation({
-        url: `https://news.google.com/search?q=${encodeURIComponent(`${rawTopic} ${marketFocus} stock market impact market reaction`)}`,
+        url: `https://news.google.com/search?q=${encodeURIComponent(articleQuery)}`,
         goal:
-          'Extract up to 8 relevant articles about how this event affects or affected the stock market. Recent articles are allowed. Historical articles are allowed. Prioritize market impact, sector impact, stock reaction, or investor reaction. Return JSON array with keys title, url, source, snippet, published.',
+          'Extract up to 8 relevant articles about how this event affects or affected the stock market. Recent articles are allowed. Historical articles are allowed. An article can be relevant even if the exact search words are not in the headline, as long as the snippet or visible context shows it is about the same event, market impact, sector impact, stock reaction, investor reaction, oil prices, supply disruption, travel demand, or policy response. Use the article context, not just headline keyword matching. Return JSON array with keys title, url, source, snippet, published.',
       });
 
       headlines = normalizeNews(historyNewsData).slice(0, 8);
     } catch (error) {
-      if (!isTinyFishTimeout(error)) {
+      if (!isTinyFishRecoverable(error)) {
         throw error;
       }
     }
@@ -291,6 +292,11 @@ async function pollTinyFishRun(runId) {
     if (!response.ok) {
       if (response.status === 401) {
         throw new Error('TinyFish rejected the polling request. Check that TINYFISH_API_KEY in your .env file is correct and active.');
+      }
+      if ([502, 503, 504].includes(response.status)) {
+        lastStatus = `HTTP_${response.status}`;
+        await delay(TINYFISH_POLL_INTERVAL_MS);
+        continue;
       }
       throw new Error(`TinyFish polling failed with status ${response.status}.`);
     }
@@ -584,6 +590,10 @@ function normalizeStringList(value, fallback) {
   return items.length ? items.slice(0, 3) : fallback;
 }
 
+function buildEventArticleQuery(topic, marketFocus) {
+  return `${topic} ${marketFocus} stocks sectors market impact analysis reaction investors`;
+}
+
 function buildFallbackArticles(topic, marketFocus) {
   return [
     {
@@ -612,6 +622,18 @@ function buildFallbackArticles(topic, marketFocus) {
 
 function isTinyFishTimeout(error) {
   return error instanceof Error && error.message.toLowerCase().includes('timed out');
+}
+
+function isTinyFishRecoverable(error) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+
+  return (
+    message.includes('timed out') ||
+    message.includes('polling failed with status 502') ||
+    message.includes('polling failed with status 503') ||
+    message.includes('polling failed with status 504')
+  );
 }
 
 function delay(ms) {
