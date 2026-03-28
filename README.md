@@ -13,6 +13,9 @@ Make sure Node.js 20 or newer is installed first.
 2. Create a `.env` file in the project root:
 ```bash
 TINYFISH_API_KEY=your_tinyfish_key
+OPENAI_API_KEY=your_openai_key
+OPENAI_MODEL=gpt-5.2
+OPENAI_REASONING_EFFORT=medium
 PORT=8787
 ```
 

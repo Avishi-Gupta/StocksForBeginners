@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 
 const commonStocks = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'TSLA', 'SPY', 'QQQ'];
+const historyExamples = ['COVID outbreak', 'bird flu outbreak', 'oil shock', 'banking crisis', 'Taiwan earthquake'];
 
 const summaryPreview = [
   {
@@ -28,6 +29,7 @@ type MarketHeadline = {
   url: string;
   source: string;
   published: string;
+  snippet?: string;
 };
 
 type MarketSnapshot =
@@ -56,38 +58,100 @@ type PortfolioMarketStats = {
   headlineCount: number;
 };
 
-type ApiResult =
-  | {
-      ok: true;
-      mode: 'live';
-      query: string;
-      symbol: string;
-      companyName: string;
-      sector: string;
-      industry: string;
-      description: string;
-      price: number | null;
-      change: number | null;
-      changePercent: string | null;
-      marketCap: number | null;
-      peRatio: number | null;
-      range52Week: string | null;
-      beginnerSummary: string;
-      whyPeopleLikeIt: string[];
-      risks: string[];
-      fetchedAt: string;
-    }
-  | {
-      ok: false;
-      mode: 'config_required' | 'error';
-      query: string;
-      message: string;
-      missingKeys?: {
-        tinyFish: boolean;
-      };
-    };
+type StockSuccessResult = {
+  ok: true;
+  mode: 'live';
+  query: string;
+  symbol: string;
+  companyName: string;
+  sector: string;
+  industry: string;
+  description: string;
+  price: number | null;
+  change: number | null;
+  changePercent: string | null;
+  marketCap: number | null;
+  peRatio: number | null;
+  range52Week: string | null;
+  beginnerSummary: string;
+  whyPeopleLikeIt: string[];
+  risks: string[];
+  fetchedAt: string;
+};
 
-function App() {
+type EventImpactSuccessResult = {
+  ok: true;
+  mode: 'live';
+  topic: string;
+  marketFocus: string;
+  aiSummary: string;
+  lessons: string[];
+  signalsToWatch: string[];
+  headlines: MarketHeadline[];
+  links: Array<{ label: string; href: string }>;
+  fetchedAt: string;
+};
+
+type ApiErrorResult = {
+  ok: false;
+  mode: 'config_required' | 'error';
+  query?: string;
+  topic?: string;
+  message: string;
+  missingKeys?: {
+    tinyFish?: boolean;
+    openAI?: boolean;
+  };
+  links?: Array<{ label: string; href: string }>;
+};
+
+type ApiResult = StockSuccessResult | ApiErrorResult;
+type EventImpactResult = EventImpactSuccessResult | ApiErrorResult;
+type PageView = 'stocks' | 'history';
+
+export default function App() {
+  const [view, setView] = useState<PageView>(getInitialView());
+
+  useEffect(() => {
+    function syncViewFromHash() {
+      setView(getInitialView());
+    }
+
+    window.addEventListener('hashchange', syncViewFromHash);
+    return () => window.removeEventListener('hashchange', syncViewFromHash);
+  }, []);
+
+  return (
+    <main className="page-shell">
+      <header className="top-nav">
+        <a className="brand-mark" href="#stocks">
+          Stocks For Beginners
+        </a>
+
+        <nav className="nav-links" aria-label="Primary">
+          <a
+            className={view === 'stocks' ? 'nav-link nav-link-active' : 'nav-link'}
+            href="#stocks"
+            onClick={() => setView('stocks')}
+          >
+            Stock Summary
+          </a>
+          <a
+            className={view === 'history' ? 'nav-link nav-link-active' : 'nav-link'}
+            href="#history"
+            onClick={() => setView('history')}
+          >
+            Event History
+          </a>
+        </nav>
+      </header>
+
+      {view === 'stocks' ? <StockSummaryPage /> : <EventHistoryPage />}
+    </main>
+  );
+}
+
+function StockSummaryPage() {
   const [query, setQuery] = useState('AAPL');
   const [submittedQuery, setSubmittedQuery] = useState('AAPL');
   const [result, setResult] = useState<ApiResult | null>(null);
@@ -113,11 +177,13 @@ function App() {
         if (!active) return;
 
         setMarketSnapshot(data);
+
         if (!response.ok || !data.ok) {
           setMarketError('message' in data ? data.message : 'Unable to load market snapshot.');
         }
-      } catch (_error) {
+      } catch {
         if (!active) return;
+
         setMarketError('Could not load the market snapshot.');
         setMarketSnapshot({
           ok: false,
@@ -138,6 +204,7 @@ function App() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     const cleaned = query.trim();
     if (!cleaned) return;
 
@@ -150,10 +217,11 @@ function App() {
       const response = await fetch(`/api/analyze?query=${encodeURIComponent(cleaned)}`);
       const data = (await response.json()) as ApiResult;
       setResult(data);
+
       if (!response.ok || !data.ok) {
         setErrorMessage('message' in data ? data.message : 'Unable to load stock data.');
       }
-    } catch (_error) {
+    } catch {
       setErrorMessage('Could not reach the local API server.');
       setResult({
         ok: false,
@@ -173,17 +241,17 @@ function App() {
   const budgetValue = Number(budget);
   const portfolioMarketStats = buildPortfolioMarketStats(marketSnapshot);
   const portfolioPlan = buildPortfolioPlan(riskTolerance, budgetValue, portfolioMarketStats);
-  const statusCopy =
-    loading
-      ? 'Getting the stock basics...'
-      : liveResult
-        ? `Live summary for ${liveResult.companyName}`
-        : result && !result.ok && result.mode === 'config_required'
-          ? 'Add your TinyFish key to enable live results.'
-          : 'Search a stock to get a simple beginner summary.';
+
+  const statusCopy = loading
+    ? 'Getting the stock basics...'
+    : liveResult
+      ? `Live summary for ${liveResult.companyName}`
+      : result && !result.ok && result.mode === 'config_required'
+        ? 'Add your TinyFish key to enable live results.'
+        : 'Search a stock to get a simple beginner summary.';
 
   return (
-    <main className="page-shell">
+    <>
       <section className="hero hero-single">
         <div className="hero-copy">
           <p className="eyebrow">Stock Search</p>
@@ -196,6 +264,7 @@ function App() {
             <label className="query-label" htmlFor="stock-query">
               Stock name or ticker
             </label>
+
             <div className="query-row">
               <input
                 id="stock-query"
@@ -249,6 +318,7 @@ function App() {
             <span className="panel-dot panel-dot-amber" />
             <span className="panel-dot panel-dot-blue" />
           </div>
+
           <div className="panel-content">
             <p className="panel-label">Summary</p>
             <h2>{loading || liveResult ? submittedQuery : 'Ready when you are'}</h2>
@@ -304,6 +374,7 @@ function App() {
                           At {formatCurrency(liveResult.price)} per share, you would buy about{' '}
                           <strong>{investmentSimulator.shares.toFixed(2)} shares</strong>
                         </p>
+
                         <div className="simulator-stats">
                           <div className="simulator-stat">
                             <span>Today</span>
@@ -318,6 +389,7 @@ function App() {
                             <strong>{formatCurrency(investmentSimulator.highValue)}</strong>
                           </div>
                         </div>
+
                         <p className="simulator-note">
                           This is a quick illustration based on the live quote and 52-week range.
                         </p>
@@ -402,8 +474,13 @@ function App() {
         <div className="market-overview-chart">
           <div className="market-chart-header">
             <strong>What’s driving things</strong>
-            <span>{marketSnapshot && marketSnapshot.ok ? `Updated ${formatTime(marketSnapshot.updatedAt)}` : 'Live headlines from TinyFish'}</span>
+            <span>
+              {marketSnapshot && marketSnapshot.ok
+                ? `Updated ${formatTime(marketSnapshot.updatedAt)}`
+                : 'Live headlines from TinyFish'}
+            </span>
           </div>
+
           {marketLoading ? (
             <div className="bar-chart">
               <div className="bar-row market-skeleton" />
@@ -436,6 +513,7 @@ function App() {
               </div>
             </div>
           )}
+
           <div className="headline-list">
             <strong>Current headlines</strong>
             {marketLoading ? (
@@ -478,7 +556,9 @@ function App() {
           <article className="portfolio-mini-stat">
             <span>Market tone</span>
             <strong>
-              {portfolioMarketStats ? `${portfolioMarketStats.tone} (${formatToneScore(portfolioMarketStats.toneScore)})` : 'Waiting on TinyFish'}
+              {portfolioMarketStats
+                ? `${portfolioMarketStats.tone} (${formatToneScore(portfolioMarketStats.toneScore)})`
+                : 'Waiting on TinyFish'}
             </strong>
           </article>
           <article className="portfolio-mini-stat">
@@ -492,7 +572,9 @@ function App() {
           <article className="portfolio-mini-stat">
             <span>Headlines</span>
             <strong>
-              {portfolioMarketStats ? `${portfolioMarketStats.headlineCount} seen today` : 'Loading...'}
+              {portfolioMarketStats
+                ? `${portfolioMarketStats.headlineCount} seen today`
+                : 'Loading...'}
             </strong>
           </article>
         </div>
@@ -500,7 +582,12 @@ function App() {
         <form className="starter-builder-form">
           <label className="builder-field">
             <span>Risk tolerance</span>
-            <select value={riskTolerance} onChange={(event) => setRiskTolerance(event.target.value as 'Low' | 'Medium' | 'High')}>
+            <select
+              value={riskTolerance}
+              onChange={(event) =>
+                setRiskTolerance(event.target.value as 'Low' | 'Medium' | 'High')
+              }
+            >
               <option value="Low">Low</option>
               <option value="Medium">Medium</option>
               <option value="High">High</option>
@@ -546,14 +633,240 @@ function App() {
           </p>
         </div>
       </section>
-    </main>
+    </>
   );
 }
 
-export default App;
+function EventHistoryPage() {
+  const [topic, setTopic] = useState('COVID outbreak');
+  const [marketFocus, setMarketFocus] = useState('S&P 500');
+  const [submittedTopic, setSubmittedTopic] = useState('COVID outbreak');
+  const [result, setResult] = useState<EventImpactResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const cleanedTopic = topic.trim();
+    const cleanedMarket = marketFocus.trim();
+    if (!cleanedTopic) return;
+
+    setSubmittedTopic(cleanedTopic);
+    setLoading(true);
+    setErrorMessage('');
+
+    try {
+      const response = await fetch(
+        `/api/event-impact?topic=${encodeURIComponent(cleanedTopic)}&market=${encodeURIComponent(cleanedMarket || 'S&P 500')}`,
+      );
+      const data = (await response.json()) as EventImpactResult;
+      setResult(data);
+
+      if (!response.ok || !data.ok) {
+        setErrorMessage('message' in data ? data.message : 'Unable to load event history.');
+      }
+    } catch {
+      setErrorMessage('Could not reach the local API server.');
+      setResult({
+        ok: false,
+        mode: 'error',
+        topic: cleanedTopic,
+        message: 'Could not reach the local API server.',
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const liveResult = result && result.ok ? result : null;
+
+  const statusCopy = loading
+    ? 'Collecting past headlines and market context...'
+    : liveResult
+      ? `Historical context for ${submittedTopic}`
+      : result && !result.ok && result.mode === 'config_required'
+        ? 'Add API keys to enable live event history.'
+        : 'Search an event to see how markets reacted and what beginners should learn.';
+
+  return (
+    <>
+      <section className="history-hero">
+        <div className="history-shell">
+          <p className="eyebrow">Event History Lab</p>
+          <h1>Study past shocks before the next one hits.</h1>
+          <p className="history-intro">
+            Search an event and market focus to get a simple explanation, key takeaways,
+            and related reading.
+          </p>
+
+          <form className="history-form" onSubmit={handleSubmit}>
+            <div className="history-form-row">
+              <label className="history-field" htmlFor="history-topic">
+                <span className="query-label">Event</span>
+                <input
+                  id="history-topic"
+                  className="query-input"
+                  value={topic}
+                  onChange={(event) => setTopic(event.target.value)}
+                  placeholder="COVID outbreak, banking crisis, oil shock..."
+                  autoComplete="off"
+                />
+              </label>
+
+              <label className="history-field" htmlFor="history-market">
+                <span className="query-label">Market Focus</span>
+                <input
+                  id="history-market"
+                  className="query-input"
+                  value={marketFocus}
+                  onChange={(event) => setMarketFocus(event.target.value)}
+                  placeholder="S&P 500, airlines, oil stocks..."
+                  autoComplete="off"
+                />
+              </label>
+
+              <button className="primary-btn history-submit" type="submit">
+                Research Event
+              </button>
+            </div>
+          </form>
+
+          <div className="history-toolbar">
+            <div className="chip-row" aria-label="Example events">
+              {historyExamples.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className="example-chip"
+                  onClick={() => setTopic(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+
+            <div className="history-status-card">
+              <strong>{loading ? 'Loading' : 'Status'}</strong>
+              <span>{statusCopy}</span>
+            </div>
+          </div>
+
+          {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
+        </div>
+      </section>
+
+      {liveResult ? (
+        <section className="section report-section">
+          <div className="result-stack">
+            <div className="metric-grid">
+              <div className="result-metric">
+                <span>Topic</span>
+                <strong>{liveResult.topic}</strong>
+              </div>
+              <div className="result-metric">
+                <span>Focus</span>
+                <strong>{liveResult.marketFocus}</strong>
+              </div>
+              <div className="result-metric">
+                <span>Articles</span>
+                <strong>{String(liveResult.headlines.length)}</strong>
+              </div>
+            </div>
+
+            <div className="report-layout">
+              <div className="summary-box">
+                <strong>Simple Explanation</strong>
+                <p>{liveResult.aiSummary}</p>
+              </div>
+
+              <div className="insight-grid">
+                <article className="insight-card">
+                  <p className="insight-label">Main Lessons</p>
+                  <div className="insight-stack">
+                    {liveResult.lessons.map((lesson, index) => (
+                      <div key={lesson} className="insight-row">
+                        <span className="insight-number">0{index + 1}</span>
+                        <p>{lesson}</p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="insight-card insight-card-blue">
+                  <p className="insight-label">Watch Next Time</p>
+                  <div className="signal-grid">
+                    {liveResult.signalsToWatch.map((signal) => (
+                      <div key={signal} className="signal-card">
+                        {signal}
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </div>
+
+              <div className="reading-card">
+                <div className="reading-card-header">
+                  <strong>Related Articles</strong>
+                  <span>Open a source to read more</span>
+                </div>
+
+                {liveResult.headlines.length ? (
+                  <div className="headline-grid">
+                    {liveResult.headlines.map((item) => (
+                      <a
+                        key={`${item.title}-${item.url}`}
+                        className="headline-card"
+                        href={item.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <div className="headline-title-block">
+                          <span>{item.title}</span>
+                        </div>
+                        <small className="headline-meta">
+                          {formatSourceLine(item.source, item.published)}
+                        </small>
+                        <div className="headline-snippet">
+                          <p>{item.snippet || 'Open the article to read the full explanation.'}</p>
+                        </div>
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <p>No relevant articles came back for that event.</p>
+                )}
+
+                <div className="source-card-row">
+                  {liveResult.links.map((link) => (
+                    <a
+                      key={link.label}
+                      className="source-card"
+                      href={link.href}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <strong>{link.label}</strong>
+                      <span>Open source</span>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
+    </>
+  );
+}
+
+function getInitialView(): PageView {
+  return window.location.hash === '#history' ? 'history' : 'stocks';
+}
 
 function formatCurrency(value: number | null) {
   if (value == null) return 'N/A';
+
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
@@ -565,8 +878,11 @@ function formatChange(change: number | null, percent: string | null) {
   if (change == null && !percent) return 'N/A';
 
   const signedChange = change == null ? 'N/A' : `${change > 0 ? '+' : ''}${change.toFixed(2)}`;
-
   return percent ? `${signedChange} (${percent})` : signedChange;
+}
+
+function formatSourceLine(source: string, published: string) {
+  return published ? `${source} | ${published}` : source;
 }
 
 function formatToneScore(score: number) {
@@ -577,6 +893,7 @@ function formatToneScore(score: number) {
 
 function formatTime(value: string) {
   const date = new Date(value);
+
   if (Number.isNaN(date.getTime())) return 'just now';
 
   return new Intl.DateTimeFormat('en-US', {
@@ -627,6 +944,7 @@ function buildPortfolioPlan(
   marketStats: PortfolioMarketStats | null,
 ) {
   const safeBudget = Number.isFinite(budget) && budget > 0 ? budget : 0;
+
   const basePlans = {
     Low: { ETFs: 55, 'Safe stocks': 30, Tech: 15 },
     Medium: { ETFs: 40, 'Safe stocks': 30, Tech: 30 },
@@ -657,7 +975,11 @@ function buildPortfolioPlan(
     weights['Safe stocks'] -= 3;
   }
 
-  if (leadingTheme.includes('rate') || leadingTheme.includes('bond') || leadingTheme.includes('inflation')) {
+  if (
+    leadingTheme.includes('rate') ||
+    leadingTheme.includes('bond') ||
+    leadingTheme.includes('inflation')
+  ) {
     weights.ETFs += 5;
     weights['Safe stocks'] += 4;
     weights.Tech -= 9;
@@ -680,7 +1002,7 @@ function buildPortfolioMarketStats(snapshot: MarketSnapshot | null): PortfolioMa
 
   const leadingTheme = snapshot.themes.reduce(
     (best, theme) => (theme.score > best.score ? theme : best),
-    snapshot.themes[0] || { label: snapshot.tone, score: snapshot.toneScore },
+    snapshot.themes[0] || { label: snapshot.tone, score: snapshot.toneScore, note: '' },
   );
 
   return {
@@ -692,21 +1014,26 @@ function buildPortfolioMarketStats(snapshot: MarketSnapshot | null): PortfolioMa
   };
 }
 
-function normalizePortfolioWeights(weights: { ETFs: number; Tech: number; 'Safe stocks': number }) {
-  const positive = {
-    ETFs: Math.max(10, weights.ETFs),
-    Tech: Math.max(10, weights.Tech),
-    'Safe stocks': Math.max(10, weights['Safe stocks']),
-  };
-  const total = positive.ETFs + positive.Tech + positive['Safe stocks'];
+function normalizePortfolioWeights(weights: Record<string, number>) {
+  const entries = Object.entries(weights);
+  const total = entries.reduce((sum, [, value]) => sum + value, 0);
 
-  const etfs = Math.round((positive.ETFs / total) * 100);
-  const tech = Math.round((positive.Tech / total) * 100);
-  const safeStocks = 100 - etfs - tech;
+  if (total <= 0) {
+    return { ETFs: 0, Tech: 0, 'Safe stocks': 0 };
+  }
+
+  const normalized = Object.fromEntries(
+    entries.map(([key, value]) => [key, Math.round((value / total) * 100)]),
+  ) as Record<string, number>;
+
+  const currentTotal = Object.values(normalized).reduce((sum, value) => sum + value, 0);
+  const delta = 100 - currentTotal;
+
+  normalized.ETFs = (normalized.ETFs || 0) + delta;
 
   return {
-    ETFs: etfs,
-    Tech: tech,
-    'Safe stocks': safeStocks,
+    ETFs: normalized.ETFs || 0,
+    Tech: normalized.Tech || 0,
+    'Safe stocks': normalized['Safe stocks'] || 0,
   };
 }

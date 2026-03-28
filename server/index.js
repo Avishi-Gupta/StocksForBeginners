@@ -5,10 +5,17 @@ import express from 'express';
 const app = express();
 const PORT = Number(process.env.PORT || 8787);
 const TINYFISH_API_KEY = process.env.TINYFISH_API_KEY?.trim();
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY?.trim();
 const MARKET_SNAPSHOT_TTL_MS = 10 * 60 * 1000;
 
-let marketSnapshotCache = null;
-let marketSnapshotPromise = null;
+let marketSnapshotCache:
+  | {
+      updatedAtMs: number;
+      payload: unknown;
+    }
+  | null = null;
+
+let marketSnapshotPromise: Promise<unknown> | null = null;
 
 app.use(cors());
 app.use(express.json());
@@ -18,6 +25,7 @@ app.get('/api/health', (_req, res) => {
     ok: true,
     api: 'stocks-for-beginners',
     tinyFishConfigured: Boolean(TINYFISH_API_KEY),
+    openAIConfigured: Boolean(OPENAI_API_KEY),
   });
 });
 
@@ -29,6 +37,7 @@ app.get('/api/market-snapshot', async (_req, res) => {
     const message = error instanceof Error ? error.message : 'Something went wrong.';
     res.status(500).json({
       ok: false,
+      mode: 'error',
       message,
     });
   }
@@ -67,12 +76,12 @@ app.get('/api/analyze', async (req, res) => {
     const symbol = quote.symbol || normalizeSymbol(rawQuery);
     const companyName = quote.companyName || rawQuery;
 
-    res.json({
+    return res.json({
       ok: true,
       mode: 'live',
       query: rawQuery,
       symbol,
-      companyName: quote.companyName || companyName,
+      companyName,
       sector: quote.sector || 'Unknown',
       industry: quote.industry || 'Unknown',
       description: quote.summary || '',
@@ -89,10 +98,95 @@ app.get('/api/analyze', async (req, res) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Something went wrong.';
-    res.status(500).json({
+    return res.status(500).json({
       ok: false,
       mode: 'error',
       query: rawQuery,
+      message,
+    });
+  }
+});
+
+app.get('/api/event-impact', async (req, res) => {
+  const rawTopic = typeof req.query.topic === 'string' ? req.query.topic.trim() : '';
+  const rawMarket = typeof req.query.market === 'string' ? req.query.market.trim() : '';
+  const marketFocus = rawMarket || 'S&P 500';
+
+  if (!rawTopic) {
+    return res.status(400).json({
+      ok: false,
+      message: 'Please provide an event, outbreak, or shock to research.',
+    });
+  }
+
+  if (!TINYFISH_API_KEY || !OPENAI_API_KEY) {
+    return res.json({
+      ok: false,
+      mode: 'config_required',
+      topic: rawTopic,
+      message:
+        'Add TINYFISH_API_KEY and OPENAI_API_KEY to your .env file to enable event history research.',
+      missingKeys: {
+        tinyFish: !TINYFISH_API_KEY,
+        openAI: !OPENAI_API_KEY,
+      },
+      links: buildEventLinks(rawTopic, marketFocus),
+    });
+  }
+
+  try {
+    let headlines: Array<{
+      title: string;
+      url: string;
+      source: string;
+      published: string;
+      snippet: string;
+    }> = [];
+
+    const articleQuery = buildEventArticleQuery(rawTopic, marketFocus);
+
+    try {
+      const historyNewsData = await runTinyFishAutomation({
+        url: `https://news.google.com/search?q=${encodeURIComponent(articleQuery)}`,
+        goal:
+          'Extract up to 8 relevant articles about how this event affects or affected the stock market. Recent articles are allowed. Historical articles are allowed. An article can be relevant even if the exact search words are not in the headline, as long as the snippet or visible context shows it is about the same event, market impact, sector impact, stock reaction, investor reaction, oil prices, supply disruption, travel demand, or policy response. Use the article context, not just headline keyword matching. Return JSON array with keys title, url, source, snippet, published.',
+      });
+
+      headlines = normalizeNews(historyNewsData).slice(0, 8);
+    } catch (error) {
+      if (!isTinyFishRecoverable(error)) {
+        throw error;
+      }
+    }
+
+    if (!headlines.length) {
+      headlines = buildFallbackArticles(rawTopic, marketFocus);
+    }
+
+    const insights = await buildEventImpactSummary({
+      topic: rawTopic,
+      marketFocus,
+      headlines,
+    });
+
+    return res.json({
+      ok: true,
+      mode: 'live',
+      topic: rawTopic,
+      marketFocus,
+      aiSummary: insights.summary,
+      lessons: insights.lessons,
+      signalsToWatch: insights.signalsToWatch,
+      headlines,
+      links: buildEventLinks(rawTopic, marketFocus),
+      fetchedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Something went wrong.';
+    return res.status(500).json({
+      ok: false,
+      mode: 'error',
+      topic: rawTopic,
       message,
     });
   }
@@ -102,7 +196,13 @@ app.listen(PORT, () => {
   console.log(`Stock API listening on http://localhost:${PORT}`);
 });
 
-async function runTinyFishAutomation({ url, goal }) {
+async function runTinyFishAutomation({
+  url,
+  goal,
+}: {
+  url: string;
+  goal: string;
+}) {
   const response = await fetch('https://agent.tinyfish.ai/v1/automation/run', {
     method: 'POST',
     headers: {
@@ -117,6 +217,12 @@ async function runTinyFishAutomation({ url, goal }) {
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error(
+        'TinyFish rejected the request. Check that TINYFISH_API_KEY in your .env file is correct and active.',
+      );
+    }
+
     throw new Error(`TinyFish request failed with status ${response.status}.`);
   }
 
@@ -136,6 +242,7 @@ async function runTinyFishAutomation({ url, goal }) {
 
 async function getMarketSnapshot() {
   const now = Date.now();
+
   if (marketSnapshotCache && now - marketSnapshotCache.updatedAtMs < MARKET_SNAPSHOT_TTL_MS) {
     return marketSnapshotCache.payload;
   }
@@ -156,14 +263,11 @@ async function getMarketSnapshot() {
     const raw = await runTinyFishAutomation({
       url: 'https://www.reuters.com/markets/',
       goal:
-        'Extract the current market mood and the latest stock market headlines for the day. Return JSON with keys tone, toneScore, summary, beginnerTakeaway, themes, headlines, and watchList. ' +
-        'themes should be an array of objects with keys label, score, note. ' +
-        'headlines should be an array of objects with keys title, url, source, published. ' +
-        'watchList should be an array of short strings. ' +
-        'Keep the tone and summary beginner-friendly and based on the current headlines on the page.',
+        'Extract the current market mood and the latest stock market headlines for the day. Return JSON with keys tone, toneScore, summary, beginnerTakeaway, themes, headlines, and watchList. themes should be an array of objects with keys label, score, note. headlines should be an array of objects with keys title, url, source, published. watchList should be an array of short strings. Keep the tone and summary beginner-friendly and based on the current headlines on the page.',
     });
 
     const snapshot = normalizeMarketSnapshot(raw);
+
     const payload = {
       ok: true,
       ...snapshot,
@@ -185,7 +289,7 @@ async function getMarketSnapshot() {
   }
 }
 
-function normalizeQuote(raw) {
+function normalizeQuote(raw: any) {
   const source = unwrapData(raw);
 
   return {
@@ -203,10 +307,11 @@ function normalizeQuote(raw) {
     companyName: source?.companyName || source?.name || '',
     sector: source?.sector || '',
     industry: source?.industry || '',
+    website: source?.website || '',
   };
 }
 
-function normalizeMarketSnapshot(raw) {
+function normalizeMarketSnapshot(raw: any) {
   const source = unwrapData(raw);
   const rawThemes = Array.isArray(source?.themes) ? source.themes : [];
   const rawHeadlines = Array.isArray(source?.headlines) ? source.headlines : [];
@@ -217,94 +322,266 @@ function normalizeMarketSnapshot(raw) {
     summary: String(source?.summary || source?.beginnerSummary || '').trim(),
     beginnerTakeaway: String(source?.beginnerTakeaway || source?.summary || '').trim(),
     themes: rawThemes
-      .map((theme) => ({
+      .map((theme: any) => ({
         label: String(theme?.label || 'Theme').trim(),
         score: clampNumber(toNumber(theme?.score), 0, 100, 50),
         note: String(theme?.note || '').trim(),
       }))
-      .filter((item) => item.label),
+      .filter((item: any) => item.label),
     headlines: rawHeadlines
-      .map((item) => ({
+      .map((item: any) => ({
         title: String(item?.title || '').trim(),
         url: String(item?.url || '').trim(),
         source: String(item?.source || 'Reuters').trim(),
         published: String(item?.published || '').trim(),
       }))
-      .filter((item) => item.title),
+      .filter((item: any) => item.title),
     watchList: normalizeStringList(source?.watchList || source?.watch_list),
   };
 }
 
-function normalizeNews(raw) {
+function normalizeNews(raw: any) {
   const source = unwrapData(raw);
   const items = Array.isArray(source) ? source : source?.news || source?.articles || [];
 
   return items
-    .map((item) => ({
+    .map((item: any) => ({
       title: item.title || 'Untitled headline',
       url: item.url || item.link || '',
       source: item.source || item.publisher || 'Unknown source',
       published: item.published || item.date || '',
+      snippet: item.snippet || '',
     }))
-    .filter((item) => item.title);
+    .filter((item: any) => item.title);
 }
 
-function normalizeFilings(raw) {
-  const source = unwrapData(raw);
-  const items = Array.isArray(source) ? source : source?.filings || source?.results || [];
+async function buildEventImpactSummary({
+  topic,
+  marketFocus,
+  headlines,
+}: {
+  topic: string;
+  marketFocus: string;
+  headlines: Array<{ title: string; source: string; published: string }>;
+}) {
+  if (!OPENAI_API_KEY) {
+    return {
+      summary: `Historical market-impact summary for ${topic} (${marketFocus}). Add OPENAI_API_KEY to generate a polished explanation.`,
+      lessons: ['Focus on the business reason prices moved, not only the headline.'],
+      signalsToWatch: ['Company guidance changes', 'Supply-chain disruption updates', 'Policy announcements'],
+    };
+  }
 
-  return items
-    .map((item) => ({
-      title: item.title || item.formType || 'SEC filing',
-      date: item.date || item.filed || '',
-      url: item.url || '',
-      formType: item.formType || item.form || '',
-    }))
-    .filter((item) => item.title);
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-5.2',
+      input: [
+        {
+          role: 'system',
+          content: [
+            {
+              type: 'input_text',
+              text: 'You explain historical market reactions to beginners and return strict JSON only.',
+            },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: [
+                `Event or outbreak: ${topic}`,
+                `Market focus: ${marketFocus}`,
+                '',
+                `Collected headlines:\n${
+                  headlines.length
+                    ? headlines
+                        .map(
+                          (item) =>
+                            `- ${item.title} (${item.source}${item.published ? `, ${item.published}` : ''})`,
+                        )
+                        .join('\n')
+                    : '- None found.'
+                }`,
+                '',
+                'Return strict JSON with keys:',
+                'summary: string',
+                'lessons: string[]',
+                'signalsToWatch: string[]',
+                '',
+                'Requirements:',
+                'Explain why this event mattered to the market in beginner-friendly language.',
+                'Focus on economic transmission channels such as demand shock, supply shock, fear, rates, regulation, transport disruption, or earnings risk.',
+                'Keep it calm and practical.',
+                'Do not give direct investment advice.',
+                'Provide 3 lessons and 3 signals to watch.',
+              ].join('\n'),
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenAI request failed with status ${response.status}.`);
+  }
+
+  const data = await response.json();
+  const outputText = extractResponseText(data);
+  const parsed = safeParseJson(outputText);
+
+  return {
+    summary: typeof parsed?.summary === 'string' ? parsed.summary.trim() : 'No summary was returned.',
+    lessons: normalizeStringList(parsed?.lessons, [
+      'Focus on the business reason prices moved, not only the headline.',
+      'Check which sectors were directly exposed before assuming the whole market reacted the same way.',
+      'Watch how long the disruption lasted, because markets often price duration more than fear alone.',
+    ]),
+    signalsToWatch: normalizeStringList(parsed?.signalsToWatch, [
+      'Company guidance changes',
+      'Supply-chain disruption updates',
+      'Policy, rate, or public-health announcements',
+    ]),
+  };
 }
 
-function normalizeSymbol(value) {
+function buildEventLinks(topic: string, marketFocus: string) {
+  const encodedTopic = encodeURIComponent(topic);
+  const encodedMarket = encodeURIComponent(marketFocus);
+
+  return [
+    {
+      label: 'Google News event search',
+      href: `https://news.google.com/search?q=${encodedTopic}%20${encodedMarket}%20stock%20market`,
+    },
+    {
+      label: 'Yahoo Finance market news',
+      href: 'https://finance.yahoo.com/news/',
+    },
+    {
+      label: 'WHO news',
+      href: 'https://www.who.int/news',
+    },
+  ];
+}
+
+function buildEventArticleQuery(topic: string, marketFocus: string) {
+  return `${topic} ${marketFocus} stocks sectors market impact analysis reaction investors`;
+}
+
+function buildFallbackArticles(topic: string, marketFocus: string) {
+  return [
+    {
+      title: `${topic}: market impact coverage`,
+      url: `https://news.google.com/search?q=${encodeURIComponent(`${topic} ${marketFocus} stock market impact`)}`,
+      source: 'Google News',
+      published: '',
+      snippet: `Recent and past market-impact articles about ${topic} and ${marketFocus}.`,
+    },
+    {
+      title: `${topic}: sector reaction coverage`,
+      url: `https://news.google.com/search?q=${encodeURIComponent(`${topic} ${marketFocus} sector reaction`)}`,
+      source: 'Google News',
+      published: '',
+      snippet: `Coverage of sector winners, losers, and investor reaction linked to ${topic}.`,
+    },
+    {
+      title: `${marketFocus}: Yahoo Finance news`,
+      url: 'https://finance.yahoo.com/news/',
+      source: 'Yahoo Finance',
+      published: '',
+      snippet: `Broader market and sector news related to ${marketFocus}.`,
+    },
+  ];
+}
+
+function normalizeSymbol(value: unknown) {
   return String(value || '')
     .trim()
     .toUpperCase()
     .replace(/[^A-Z0-9.\-]/g, '');
 }
 
-function normalizeStringList(value) {
+function normalizeStringList(value: unknown, fallback: string[] = []) {
   if (Array.isArray(value)) {
-    return value.map((item) => String(item).trim()).filter(Boolean);
+    const items = value.map((item) => String(item).trim()).filter(Boolean);
+    return items.length ? items : fallback;
   }
 
   if (typeof value === 'string') {
-    return value
+    const items = value
       .split('\n')
       .map((item) => item.replace(/^[-*]\s*/, '').trim())
       .filter(Boolean);
+
+    return items.length ? items : fallback;
   }
 
-  return [];
+  return fallback;
 }
 
-function clampNumber(value, min, max, fallback) {
-  const safeValue = Number.isFinite(value) ? value : fallback;
+function clampNumber(
+  value: number | null,
+  min: number,
+  max: number,
+  fallback: number,
+) {
+  const safeValue = Number.isFinite(value) ? (value as number) : fallback;
   return Math.min(max, Math.max(min, safeValue));
 }
 
-function looksLikeSymbol(value) {
-  return /^[A-Z0-9.\-]{1,8}$/.test(value) && !value.includes(' ');
-}
-
-function unwrapData(raw) {
+function unwrapData(raw: any) {
   if (!raw) return raw;
   return raw.resultJson || raw.result || raw.data || raw;
 }
 
-function parsePercent(value) {
-  const parsed = Number(String(value).replace('%', ''));
-  return Number.isFinite(parsed) ? parsed : 0;
+function toNumber(value: unknown) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === 'string') {
+    const cleaned = value.replace(/[$,%\s,]/g, '');
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
 }
 
-function toNumber(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+function isTinyFishRecoverable(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+
+  return (
+    message.includes('timed out') ||
+    message.includes('502') ||
+    message.includes('503') ||
+    message.includes('504')
+  );
+}
+
+function safeParseJson(value: unknown) {
+  if (typeof value !== 'string') return null;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function extractResponseText(data: any) {
+  if (typeof data?.output_text === 'string') return data.output_text;
+
+  const content = data?.output?.flatMap((item: any) => item?.content || []) || [];
+  const firstText = content.find((item: any) => typeof item?.text === 'string');
+  return firstText?.text || '';
 }
