@@ -101,27 +101,38 @@ a {
 }
 
 .history-intro {
-  max-width: 60ch;
-  margin-bottom: 22px;
+  max-width: 52ch;
+  margin-bottom: 16px;
 }
 
 .history-form {
-  margin-bottom: 20px;
+  max-width: 920px;
+  margin-bottom: 16px;
 }
 
 .history-form-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: end;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
 }
 
 .history-field {
-  display: block;
+  display: grid;
+  gap: 6px;
+}
+
+.history-field:first-child {
+  flex: 1.15 1 0;
+}
+
+.history-field:last-of-type {
+  flex: 0.92 1 0;
 }
 
 .history-submit {
   white-space: nowrap;
+  flex: 0 0 auto;
+  padding-inline: 18px;
 }
 
 .history-toolbar {
@@ -1282,11 +1293,15 @@ h1 {
     display: grid;
   }
 
-  .history-form-row,
   .insight-grid,
   .signal-grid,
   .headline-grid,
   .source-card-row {
+    grid-template-columns: 1fr;
+  }
+
+  .history-form-row {
+    display: grid;
     grid-template-columns: 1fr;
   }
 
