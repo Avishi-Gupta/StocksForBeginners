@@ -7,7 +7,8 @@ const app = express();
 const PORT = Number(process.env.PORT || 8787);
 const TINYFISH_API_KEY = process.env.TINYFISH_API_KEY?.trim();
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY?.trim();
-const OPENAI_MODEL = process.env.OPENAI_MODEL?.trim() || 'gpt-4.1-mini';
+const OPENAI_MODEL = process.env.OPENAI_MODEL?.trim() || 'gpt-5.2';
+const OPENAI_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT?.trim() || 'medium';
 
 const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
@@ -117,6 +118,70 @@ app.get('/api/analyze', async (req, res) => {
   }
 });
 
+app.get('/api/event-impact', async (req, res) => {
+  const rawTopic = typeof req.query.topic === 'string' ? req.query.topic.trim() : '';
+  const rawMarket = typeof req.query.market === 'string' ? req.query.market.trim() : '';
+  const marketFocus = rawMarket || 'S&P 500';
+
+  if (!rawTopic) {
+    return res.status(400).json({
+      ok: false,
+      message: 'Please provide an event, outbreak, or shock to research.',
+    });
+  }
+
+  if (!TINYFISH_API_KEY || !OPENAI_API_KEY) {
+    return res.json({
+      ok: false,
+      mode: 'config_required',
+      topic: rawTopic,
+      message:
+        'Add TINYFISH_API_KEY and OPENAI_API_KEY to your .env file to enable event history research.',
+      missingKeys: {
+        tinyFish: !TINYFISH_API_KEY,
+        openAI: !OPENAI_API_KEY,
+      },
+      links: buildEventLinks(rawTopic, marketFocus),
+    });
+  }
+
+  try {
+    const historyNewsData = await runTinyFishAutomation({
+      url: `https://news.google.com/search?q=${encodeURIComponent(`${rawTopic} ${marketFocus} stock market reaction`)}`,
+      goal:
+        'Extract up to 8 relevant headlines about this historical event and its stock-market impact. Return JSON array with keys title, url, source, snippet, published.',
+    });
+
+    const headlines = normalizeNews(historyNewsData).slice(0, 8);
+    const insights = await buildEventImpactSummary({
+      topic: rawTopic,
+      marketFocus,
+      headlines,
+    });
+
+    res.json({
+      ok: true,
+      mode: 'live',
+      topic: rawTopic,
+      marketFocus,
+      aiSummary: insights.summary,
+      lessons: insights.lessons,
+      signalsToWatch: insights.signalsToWatch,
+      headlines,
+      links: buildEventLinks(rawTopic, marketFocus),
+      fetchedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Something went wrong.';
+    res.status(500).json({
+      ok: false,
+      mode: 'error',
+      topic: rawTopic,
+      message,
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Stock API listening on http://localhost:${PORT}`);
 });
@@ -139,6 +204,9 @@ async function resolveTicker(query) {
 
   const response = await openai.responses.create({
     model: OPENAI_MODEL,
+    reasoning: {
+      effort: OPENAI_REASONING_EFFORT,
+    },
     input: [
       {
         role: 'system',
@@ -164,7 +232,7 @@ async function resolveTicker(query) {
 }
 
 async function runTinyFishAutomation({ url, goal }) {
-  const response = await fetch('https://agent.tinyfish.ai/v1/runs/async', {
+  const response = await fetch('https://agent.tinyfish.ai/v1/automation/run-async', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -173,6 +241,8 @@ async function runTinyFishAutomation({ url, goal }) {
     body: JSON.stringify({
       url,
       goal,
+      browser_profile: 'lite',
+      api_integration: 'stocks-for-beginners',
     }),
   });
 
@@ -301,6 +371,9 @@ async function buildBeginnerSummary({ query, symbol, companyName, quote, news, f
 
   const response = await openai.responses.create({
     model: OPENAI_MODEL,
+    reasoning: {
+      effort: OPENAI_REASONING_EFFORT,
+    },
     input: [
       {
         role: 'system',
@@ -319,6 +392,72 @@ async function buildBeginnerSummary({ query, symbol, companyName, quote, news, f
   });
 
   return response.output_text?.trim() || 'No summary was returned.';
+}
+
+async function buildEventImpactSummary({ topic, marketFocus, headlines }) {
+  if (!openai) {
+    return {
+      summary: `Historical market-impact summary for ${topic} (${marketFocus}). Add OPENAI_API_KEY to generate a polished explanation.`,
+      lessons: ['Add OPENAI_API_KEY to generate lessons.'],
+      signalsToWatch: ['Add OPENAI_API_KEY to generate signals to watch.'],
+    };
+  }
+
+  const prompt = [
+    `Event or outbreak: ${topic}`,
+    `Market focus: ${marketFocus}`,
+    '',
+    `Collected headlines:\n${headlines.length ? headlines.map((item) => `- ${item.title} (${item.source}${item.published ? `, ${item.published}` : ''})`).join('\n') : '- None found.'}`,
+    '',
+    'Return strict JSON with keys:',
+    'summary: string',
+    'lessons: string[]',
+    'signalsToWatch: string[]',
+    '',
+    'Requirements:',
+    'Explain why this event mattered to the market in beginner-friendly language.',
+    'Focus on economic transmission channels such as demand shock, supply shock, fear, rates, regulation, transport disruption, or earnings risk.',
+    'Keep it calm and practical.',
+    'Do not give direct investment advice.',
+    'Provide 3 lessons and 3 signals to watch.',
+  ].join('\n');
+
+  const response = await openai.responses.create({
+    model: OPENAI_MODEL,
+    reasoning: {
+      effort: OPENAI_REASONING_EFFORT,
+    },
+    input: [
+      {
+        role: 'system',
+        content: [
+          {
+            type: 'input_text',
+            text: 'You explain historical market reactions to beginners and return strict JSON only.',
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'input_text', text: prompt }],
+      },
+    ],
+  });
+
+  const parsed = safeParseJson(response.output_text);
+  return {
+    summary: typeof parsed?.summary === 'string' ? parsed.summary.trim() : 'No summary was returned.',
+    lessons: normalizeStringList(parsed?.lessons, [
+      'Focus on the business reason prices moved, not only the headline.',
+      'Check which sectors were directly exposed before assuming the whole market reacted the same way.',
+      'Watch how long the disruption lasted, because markets often price duration more than fear alone.',
+    ]),
+    signalsToWatch: normalizeStringList(parsed?.signalsToWatch, [
+      'Company guidance changes',
+      'Supply-chain disruption updates',
+      'Policy, rate, or public-health announcements',
+    ]),
+  };
 }
 
 function buildLinks(query, symbol, website = '') {
@@ -351,6 +490,26 @@ function buildLinks(query, symbol, website = '') {
   }
 
   return links;
+}
+
+function buildEventLinks(topic, marketFocus) {
+  const encodedTopic = encodeURIComponent(topic);
+  const encodedMarket = encodeURIComponent(marketFocus);
+
+  return [
+    {
+      label: 'Google News event search',
+      href: `https://news.google.com/search?q=${encodedTopic}%20${encodedMarket}%20stock%20market`,
+    },
+    {
+      label: 'Yahoo Finance market news',
+      href: 'https://finance.yahoo.com/news/',
+    },
+    {
+      label: 'WHO news',
+      href: 'https://www.who.int/news',
+    },
+  ];
 }
 
 function normalizeSymbol(value) {
@@ -388,6 +547,15 @@ function formatMaybe(value) {
 function toNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeStringList(value, fallback) {
+  if (!Array.isArray(value)) return fallback;
+  const items = value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean);
+
+  return items.length ? items.slice(0, 3) : fallback;
 }
 
 function delay(ms) {
