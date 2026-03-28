@@ -9,6 +9,8 @@ const TINYFISH_API_KEY = process.env.TINYFISH_API_KEY?.trim();
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY?.trim();
 const OPENAI_MODEL = process.env.OPENAI_MODEL?.trim() || 'gpt-5.2';
 const OPENAI_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT?.trim() || 'medium';
+const TINYFISH_POLL_ATTEMPTS = Number(process.env.TINYFISH_POLL_ATTEMPTS || 60);
+const TINYFISH_POLL_INTERVAL_MS = Number(process.env.TINYFISH_POLL_INTERVAL_MS || 2000);
 
 const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
@@ -146,13 +148,26 @@ app.get('/api/event-impact', async (req, res) => {
   }
 
   try {
-    const historyNewsData = await runTinyFishAutomation({
-      url: `https://news.google.com/search?q=${encodeURIComponent(`${rawTopic} ${marketFocus} stock market reaction`)}`,
-      goal:
-        'Extract up to 8 relevant headlines about this historical event and its stock-market impact. Return JSON array with keys title, url, source, snippet, published.',
-    });
+    let headlines = [];
 
-    const headlines = normalizeNews(historyNewsData).slice(0, 8);
+    try {
+      const historyNewsData = await runTinyFishAutomation({
+        url: `https://news.google.com/search?q=${encodeURIComponent(`${rawTopic} ${marketFocus} stock market impact market reaction`)}`,
+        goal:
+          'Extract up to 8 relevant articles about how this event affects or affected the stock market. Recent articles are allowed. Historical articles are allowed. Prioritize market impact, sector impact, stock reaction, or investor reaction. Return JSON array with keys title, url, source, snippet, published.',
+      });
+
+      headlines = normalizeNews(historyNewsData).slice(0, 8);
+    } catch (error) {
+      if (!isTinyFishTimeout(error)) {
+        throw error;
+      }
+    }
+
+    if (!headlines.length) {
+      headlines = buildFallbackArticles(rawTopic, marketFocus);
+    }
+
     const insights = await buildEventImpactSummary({
       topic: rawTopic,
       marketFocus,
@@ -247,6 +262,9 @@ async function runTinyFishAutomation({ url, goal }) {
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error('TinyFish rejected the request. Check that TINYFISH_API_KEY in your .env file is correct and active.');
+    }
     throw new Error(`TinyFish request failed with status ${response.status}.`);
   }
 
@@ -261,8 +279,9 @@ async function runTinyFishAutomation({ url, goal }) {
 }
 
 async function pollTinyFishRun(runId) {
-  const maxAttempts = 20;
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+  let lastStatus = 'UNKNOWN';
+
+  for (let attempt = 0; attempt < TINYFISH_POLL_ATTEMPTS; attempt += 1) {
     const response = await fetch(`https://agent.tinyfish.ai/v1/runs/${encodeURIComponent(runId)}`, {
       headers: {
         'X-API-Key': TINYFISH_API_KEY || '',
@@ -270,11 +289,15 @@ async function pollTinyFishRun(runId) {
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('TinyFish rejected the polling request. Check that TINYFISH_API_KEY in your .env file is correct and active.');
+      }
       throw new Error(`TinyFish polling failed with status ${response.status}.`);
     }
 
     const data = await response.json();
     const status = String(data.status || '').toUpperCase();
+    lastStatus = status || 'UNKNOWN';
 
     if (status === 'COMPLETED' || status === 'SUCCESS') {
       return data.resultJson || data.result || data;
@@ -284,10 +307,13 @@ async function pollTinyFishRun(runId) {
       throw new Error(data.error?.message || 'TinyFish automation failed.');
     }
 
-    await delay(1500);
+    await delay(TINYFISH_POLL_INTERVAL_MS);
   }
 
-  throw new Error('TinyFish automation timed out.');
+  const totalWaitSeconds = Math.round((TINYFISH_POLL_ATTEMPTS * TINYFISH_POLL_INTERVAL_MS) / 1000);
+  throw new Error(
+    `TinyFish automation timed out after about ${totalWaitSeconds} seconds (last status: ${lastStatus}). Try again or narrow the request.`,
+  );
 }
 
 function normalizeQuote(raw) {
@@ -556,6 +582,36 @@ function normalizeStringList(value, fallback) {
     .filter(Boolean);
 
   return items.length ? items.slice(0, 3) : fallback;
+}
+
+function buildFallbackArticles(topic, marketFocus) {
+  return [
+    {
+      title: `${topic}: market impact coverage`,
+      url: `https://news.google.com/search?q=${encodeURIComponent(`${topic} ${marketFocus} stock market impact`)}`,
+      source: 'Google News',
+      published: '',
+      snippet: `Recent and past market-impact articles about ${topic} and ${marketFocus}.`,
+    },
+    {
+      title: `${topic}: sector reaction coverage`,
+      url: `https://news.google.com/search?q=${encodeURIComponent(`${topic} ${marketFocus} sector reaction`)}`,
+      source: 'Google News',
+      published: '',
+      snippet: `Coverage of sector winners, losers, and investor reaction linked to ${topic}.`,
+    },
+    {
+      title: `${marketFocus}: Yahoo Finance news`,
+      url: 'https://finance.yahoo.com/news/',
+      source: 'Yahoo Finance',
+      published: '',
+      snippet: `Broader market and sector news related to ${marketFocus}.`,
+    },
+  ];
+}
+
+function isTinyFishTimeout(error) {
+  return error instanceof Error && error.message.toLowerCase().includes('timed out');
 }
 
 function delay(ms) {

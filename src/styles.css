@@ -88,6 +88,72 @@ a {
   min-height: 76vh;
 }
 
+.history-hero {
+  min-height: auto;
+}
+
+.history-shell {
+  backdrop-filter: blur(18px);
+  background: rgba(9, 17, 31, 0.64);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.22);
+  border-radius: 28px;
+  padding: 28px;
+}
+
+.history-intro {
+  max-width: 60ch;
+  margin-bottom: 22px;
+}
+
+.history-form {
+  margin-bottom: 20px;
+}
+
+.history-form-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.history-field {
+  display: block;
+}
+
+.history-submit {
+  white-space: nowrap;
+}
+
+.history-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.history-status-card {
+  display: grid;
+  gap: 4px;
+  min-width: 220px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.history-status-card strong {
+  font-size: 0.76rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #8ee7b1;
+}
+
+.history-status-card span {
+  color: rgba(236, 244, 255, 0.78);
+}
+
 .hero-copy,
 .hero-panel,
 .info-card,
@@ -354,6 +420,11 @@ h1 {
   gap: 18px;
 }
 
+.report-layout {
+  display: grid;
+  gap: 18px;
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -394,6 +465,178 @@ h1 {
 .news-list {
   display: grid;
   gap: 12px;
+}
+
+.insight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.insight-card {
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.insight-card-blue {
+  background: linear-gradient(160deg, rgba(97, 214, 255, 0.08), rgba(255, 255, 255, 0.04));
+}
+
+.insight-label {
+  margin: 0 0 14px;
+  font-size: 0.76rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #8ee7b1;
+}
+
+.insight-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.insight-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.insight-row p {
+  margin: 0;
+  color: rgba(236, 244, 255, 0.8);
+}
+
+.insight-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: rgba(159, 255, 185, 0.14);
+  color: #9fffb9;
+  font-weight: 800;
+}
+
+.signal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.signal-card {
+  display: flex;
+  align-items: center;
+  min-height: 54px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(97, 214, 255, 0.14);
+  border: 1px solid rgba(97, 214, 255, 0.18);
+  color: #e9f7ff;
+}
+
+.reading-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.reading-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.reading-card-header strong {
+  display: block;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #8ee7b1;
+}
+
+.reading-card-header span {
+  color: rgba(236, 244, 255, 0.68);
+}
+
+.source-card-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.source-card {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.source-card strong,
+.source-card span {
+  margin: 0;
+}
+
+.source-card strong {
+  color: #ecf4ff;
+}
+
+.source-card span {
+  color: #9fffb9;
+  font-size: 0.92rem;
+}
+
+.headline-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.headline-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.headline-title-block {
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.headline-title-block span {
+  color: #ecf4ff;
+  font-weight: 700;
+}
+
+.headline-meta {
+  display: block;
+  color: rgba(236, 244, 255, 0.65);
+}
+
+.headline-snippet {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.headline-snippet p {
+  margin: 0;
+  color: rgba(236, 244, 255, 0.74);
+  line-height: 1.6;
 }
 
 .news-item {
@@ -518,6 +761,14 @@ h1 {
   .card-grid {
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .history-form-row,
+  .insight-grid,
+  .signal-grid,
+  .headline-grid,
+  .source-card-row {
+    grid-template-columns: 1fr;
   }
 
   .top-nav {

@@ -444,160 +444,162 @@ function EventHistoryPage() {
 
   return (
     <>
-      <section className="hero hero-history">
-        <div className="hero-copy">
+      <section className="history-hero">
+        <div className="history-shell">
           <p className="eyebrow">Event History Lab</p>
           <h1>Study past shocks before the next one hits.</h1>
-          <p className="hero-text">
-            This page collects past headlines and explains why outbreaks or macro events
-            changed the stock market, so a beginner can spot patterns instead of
-            panicking.
+          <p className="history-intro">
+            Search an event and market focus to get a simple explanation, key takeaways,
+            and related reading.
           </p>
 
-          <form className="query-form" onSubmit={handleSubmit}>
-            <label className="query-label" htmlFor="history-topic">
-              Event or outbreak
-            </label>
-            <div className="query-row">
-              <input
-                id="history-topic"
-                className="query-input"
-                value={topic}
-                onChange={(event) => setTopic(event.target.value)}
-                placeholder="Try COVID outbreak, banking crisis, oil shock..."
-                autoComplete="off"
-              />
-            </div>
-            <label className="query-label" htmlFor="history-market">
-              Market focus
-            </label>
-            <div className="query-row">
-              <input
-                id="history-market"
-                className="query-input"
-                value={marketFocus}
-                onChange={(event) => setMarketFocus(event.target.value)}
-                placeholder="S&P 500, airlines, oil stocks, semiconductor stocks..."
-                autoComplete="off"
-              />
-              <button className="primary-btn" type="submit">
+          <form className="history-form" onSubmit={handleSubmit}>
+            <div className="history-form-row">
+              <label className="history-field" htmlFor="history-topic">
+                <span className="query-label">Event</span>
+                <input
+                  id="history-topic"
+                  className="query-input"
+                  value={topic}
+                  onChange={(event) => setTopic(event.target.value)}
+                  placeholder="COVID outbreak, banking crisis, oil shock..."
+                  autoComplete="off"
+                />
+              </label>
+
+              <label className="history-field" htmlFor="history-market">
+                <span className="query-label">Market Focus</span>
+                <input
+                  id="history-market"
+                  className="query-input"
+                  value={marketFocus}
+                  onChange={(event) => setMarketFocus(event.target.value)}
+                  placeholder="S&P 500, airlines, oil stocks..."
+                  autoComplete="off"
+                />
+              </label>
+
+              <button className="primary-btn history-submit" type="submit">
                 Research Event
               </button>
             </div>
           </form>
 
-          <div className="chip-row" aria-label="Example events">
-            {historyExamples.map((item) => (
-              <button
-                key={item}
-                type="button"
-                className="example-chip"
-                onClick={() => setTopic(item)}
-              >
-                {item}
-              </button>
-            ))}
+          <div className="history-toolbar">
+            <div className="chip-row" aria-label="Example events">
+              {historyExamples.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className="example-chip"
+                  onClick={() => setTopic(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+
+            <div className="history-status-card">
+              <strong>{loading ? 'Loading' : 'Status'}</strong>
+              <span>{statusCopy}</span>
+            </div>
           </div>
+
+          {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
         </div>
+      </section>
 
-        <aside className="hero-panel" aria-label="Historical analysis panel">
-          <div className="panel-top">
-            <span className="panel-dot panel-dot-green" />
-            <span className="panel-dot panel-dot-amber" />
-            <span className="panel-dot panel-dot-blue" />
-          </div>
-          <div className="panel-content">
-            <p className="panel-label">Event impact report</p>
-            <h2>{loading || liveResult ? submittedTopic : 'Past market reactions'}</h2>
-            <p>{statusCopy}</p>
-            {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
-            {liveResult ? (
-              <div className="result-stack">
-                <div className="summary-box">
-                  <strong>What happened and why markets moved</strong>
-                  <p>{liveResult.aiSummary}</p>
-                </div>
+      {liveResult ? (
+        <section className="section report-section">
+          <div className="result-stack">
+            <div className="metric-grid">
+              <div className="result-metric">
+                <span>Topic</span>
+                <strong>{liveResult.topic}</strong>
+              </div>
+              <div className="result-metric">
+                <span>Focus</span>
+                <strong>{liveResult.marketFocus}</strong>
+              </div>
+              <div className="result-metric">
+                <span>Articles</span>
+                <strong>{String(liveResult.headlines.length)}</strong>
+              </div>
+            </div>
 
-                <div className="split-card-grid">
-                  <div className="news-list">
-                    <strong>Lessons for beginners</strong>
-                    <ul className="mini-list compact-list">
-                      {liveResult.lessons.map((lesson) => (
-                        <li key={lesson}>{lesson}</li>
-                      ))}
-                    </ul>
+            <div className="report-layout">
+              <div className="summary-box">
+                <strong>Simple Explanation</strong>
+                <p>{liveResult.aiSummary}</p>
+              </div>
+
+              <div className="insight-grid">
+                <article className="insight-card">
+                  <p className="insight-label">Main Lessons</p>
+                  <div className="insight-stack">
+                    {liveResult.lessons.map((lesson, index) => (
+                      <div key={lesson} className="insight-row">
+                        <span className="insight-number">0{index + 1}</span>
+                        <p>{lesson}</p>
+                      </div>
+                    ))}
                   </div>
+                </article>
 
-                  <div className="news-list">
-                    <strong>Signals to watch next time</strong>
-                    <ul className="mini-list compact-list">
-                      {liveResult.signalsToWatch.map((signal) => (
-                        <li key={signal}>{signal}</li>
-                      ))}
-                    </ul>
+                <article className="insight-card insight-card-blue">
+                  <p className="insight-label">Watch Next Time</p>
+                  <div className="signal-grid">
+                    {liveResult.signalsToWatch.map((signal) => (
+                      <div key={signal} className="signal-card">
+                        {signal}
+                      </div>
+                    ))}
                   </div>
-                </div>
+                </article>
+              </div>
 
-                <div className="news-list">
-                  <strong>Past headlines collected</strong>
-                  {liveResult.headlines.length ? (
-                    liveResult.headlines.map((item) => (
+              <div className="reading-card">
+                <div className="reading-card-header">
+                  <strong>Related Articles</strong>
+                  <span>Open a source to read more</span>
+                </div>
+                {liveResult.headlines.length ? (
+                  <div className="headline-grid">
+                    {liveResult.headlines.map((item) => (
                       <a
                         key={`${item.title}-${item.url}`}
-                        className="news-item"
+                        className="headline-card"
                         href={item.url}
                         target="_blank"
                         rel="noreferrer"
                       >
-                        <span>{item.title}</span>
-                        <small>{formatSourceLine(item.source, item.published)}</small>
+                        <div className="headline-title-block">
+                          <span>{item.title}</span>
+                        </div>
+                        <small className="headline-meta">{formatSourceLine(item.source, item.published)}</small>
+                        <div className="headline-snippet">
+                          <p>{item.snippet || 'Open the article to read the full explanation.'}</p>
+                        </div>
                       </a>
-                    ))
-                  ) : (
-                    <p>No historical headlines came back for that event.</p>
-                  )}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p>No relevant articles came back for that event.</p>
+                )}
 
-                <div className="link-row">
+                <div className="source-card-row">
                   {liveResult.links.map((link) => (
-                    <a key={link.label} className="card-link" href={link.href} target="_blank" rel="noreferrer">
-                      {link.label}
+                    <a key={link.label} className="source-card" href={link.href} target="_blank" rel="noreferrer">
+                      <strong>{link.label}</strong>
+                      <span>Open source</span>
                     </a>
                   ))}
                 </div>
               </div>
-            ) : (
-              <div className="mini-metric">
-                <strong>What this page should teach</strong>
-                <ul className="mini-list">
-                  <li>What the event was and why investors cared.</li>
-                  <li>Which sectors or indexes were hit first.</li>
-                  <li>What signals mattered before and after the move.</li>
-                  <li>What a beginner can watch during the next shock.</li>
-                </ul>
-              </div>
-            )}
+            </div>
           </div>
-        </aside>
-      </section>
-
-      <section className="section split-section">
-        <div className="section-heading">
-          <p className="eyebrow">How to use it</p>
-          <h2>Learn from old headlines before new panic starts.</h2>
-          <p className="section-text">
-            Search outbreaks, policy shocks, supply-chain events, or banking stress and
-            compare the market reaction to what happened underneath.
-          </p>
-        </div>
-
-        <ol className="steps-list">
-          <li>Search the event in plain English, not just the ticker.</li>
-          <li>Use a market focus like airlines, energy, or S&amp;P 500.</li>
-          <li>Read the lessons section before looking at price moves alone.</li>
-          <li>Watch for repeated signals that could matter in future outbreaks.</li>
-        </ol>
-      </section>
+        </section>
+      ) : null}
     </>
   );
 }
