@@ -125,7 +125,7 @@ export default function App() {
     <main className="page-shell">
       <header className="top-nav">
         <a className="brand-mark" href="#stocks">
-          Stocks For Beginners
+          FishStocks
         </a>
 
         <nav className="nav-links" aria-label="Primary">
