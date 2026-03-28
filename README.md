@@ -1,4 +1,4 @@
-# StocksForBeginners
+# FishStocks
 
 Beginner-friendly stock assistant starter built with React, Vite, TinyFish, and a small Node API.
 
@@ -31,3 +31,5 @@ The frontend runs on Vite and proxies `/api/*` requests to the local API server.
 - Accepts a stock name or ticker
 - Uses TinyFish to scrape public stock, news, and filing pages
 - Builds a simple beginner summary with risks, basics, and recent headlines
+- Beginner portfolio builder based in current market trends
+- Analyse past events to show how market reacts
