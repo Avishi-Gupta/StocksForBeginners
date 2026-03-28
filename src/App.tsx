@@ -157,6 +157,9 @@ function App() {
   }
 
   const liveResult = result && result.ok ? result : null;
+  const investmentSimulator = liveResult
+    ? buildInvestmentSimulator(liveResult.price, liveResult.range52Week)
+    : null;
   const statusCopy =
     loading
       ? 'Getting the stock basics...'
@@ -278,6 +281,39 @@ function App() {
                         <li key={item}>{item}</li>
                       ))}
                     </ul>
+                  </div>
+
+                  <div className="summary-box summary-box-fixed simulator-box">
+                    <strong>If you put in $100</strong>
+                    {investmentSimulator ? (
+                      <div className="simulator-grid">
+                        <p className="simulator-text">
+                          At {formatCurrency(liveResult.price)} per share, you would buy about{' '}
+                          <strong>{investmentSimulator.shares.toFixed(2)} shares</strong>
+                        </p>
+                        <div className="simulator-stats">
+                          <div className="simulator-stat">
+                            <span>Today</span>
+                            <strong>{formatCurrency(investmentSimulator.currentValue)}</strong>
+                          </div>
+                          <div className="simulator-stat">
+                            <span>52-week low</span>
+                            <strong>{formatCurrency(investmentSimulator.lowValue)}</strong>
+                          </div>
+                          <div className="simulator-stat">
+                            <span>52-week high</span>
+                            <strong>{formatCurrency(investmentSimulator.highValue)}</strong>
+                          </div>
+                        </div>
+                        <p className="simulator-note">
+                          This is a quick illustration based on the live quote and 52-week range.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="simulator-note">
+                        TinyFish did not return a usable price range for this stock yet.
+                      </p>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -452,4 +488,38 @@ function formatTime(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(date);
+}
+
+function buildInvestmentSimulator(price: number | null, range52Week: string | null) {
+  if (price == null || price <= 0) return null;
+
+  const range = parse52WeekRange(range52Week);
+  const shares = 100 / price;
+
+  return {
+    shares,
+    currentValue: 100,
+    lowValue: range ? shares * range.low : null,
+    highValue: range ? shares * range.high : null,
+  };
+}
+
+function parse52WeekRange(range52Week: string | null) {
+  if (!range52Week) return null;
+
+  const parts = range52Week
+    .split('-')
+    .map((part) => parsePriceLikeNumber(part))
+    .filter((value): value is number => Number.isFinite(value));
+
+  if (parts.length < 2) return null;
+
+  const [low, high] = parts[0] <= parts[1] ? parts : [parts[1], parts[0]];
+  return { low, high };
+}
+
+function parsePriceLikeNumber(value: string) {
+  const cleaned = value.replace(/[^0-9.-]/g, '');
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
