@@ -1,12 +1,52 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 
-type ApiNewsItem = {
+const commonStocks = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'TSLA', 'SPY', 'QQQ'];
+
+const summaryPreview = [
+  {
+    title: 'Try a ticker',
+    text: 'AAPL, MSFT, NVDA, SPY, and QQQ are good starter searches.',
+  },
+  {
+    title: 'What you get',
+    text: 'Price, movement, a plain-English explanation, plus risks and reasons.',
+  },
+  {
+    title: 'How to read it',
+    text: 'Use it as a quick overview before you dig deeper elsewhere.',
+  },
+];
+
+type MarketTheme = {
+  label: string;
+  score: number;
+  note: string;
+};
+
+type MarketHeadline = {
   title: string;
   url: string;
   source: string;
-  timePublished: string;
-  summary: string;
+  published: string;
 };
+
+type MarketSnapshot =
+  | {
+      ok: true;
+      tone: string;
+      toneScore: number;
+      summary: string;
+      beginnerTakeaway: string;
+      themes: MarketTheme[];
+      headlines: MarketHeadline[];
+      watchList: string[];
+      updatedAt: string;
+    }
+  | {
+      ok: false;
+      mode: 'config_required' | 'error';
+      message: string;
+    };
 
 type ApiResult =
   | {
@@ -18,19 +58,15 @@ type ApiResult =
       sector: string;
       industry: string;
       description: string;
-      website: string;
       price: number | null;
       change: number | null;
       changePercent: string | null;
-      volume: string | null;
       marketCap: number | null;
       peRatio: number | null;
       range52Week: string | null;
-      dividendYield: string | null;
-      aiSummary: string;
-      news: ApiNewsItem[];
-      filings: Array<{ title: string; date: string; url: string; formType: string }>;
-      links: Array<{ label: string; href: string }>;
+      beginnerSummary: string;
+      whyPeopleLikeIt: string[];
+      risks: string[];
       fetchedAt: string;
     }
   | {
@@ -40,58 +76,8 @@ type ApiResult =
       message: string;
       missingKeys?: {
         tinyFish: boolean;
-        openAI: boolean;
       };
-      links?: Array<{ label: string; href: string }>;
     };
-
-const dataSources = [
-  {
-    title: 'Yahoo Finance',
-    body: 'Use the quote page for price, change, valuation, and company summary.',
-    href: 'https://finance.yahoo.com/',
-  },
-  {
-    title: 'Google News',
-    body: 'Use recent headlines to explain why the stock may be moving today.',
-    href: 'https://news.google.com/',
-  },
-  {
-    title: 'SEC EDGAR',
-    body: 'Use filings for official company facts, earnings updates, and risk disclosures.',
-    href: 'https://www.sec.gov/edgar/search-and-access',
-  },
-  {
-    title: 'Company IR',
-    body: 'Use the company investor relations page for press releases and earnings decks.',
-    href: 'https://investor.apple.com/investor-relations/default.aspx',
-  },
-  {
-    title: 'X / Twitter',
-    body: 'Use carefully for sentiment and quick reactions, not as a primary source.',
-    href: 'https://developer.x.com/en/docs/twitter-api',
-  },
-  {
-    title: 'OpenAI',
-    body: 'Use the model to turn raw data into a beginner-friendly summary.',
-    href: 'https://platform.openai.com/docs',
-  },
-];
-
-const workflowSteps = [
-  'Accept a stock name or ticker from the user.',
-  'Use OpenAI to resolve the most likely ticker.',
-  'Fetch the quote page, recent news, and SEC filings with TinyFish.',
-  'Ask OpenAI to explain the findings in simple language.',
-  'Show a beginner summary with risks, context, and next steps.',
-];
-
-const exampleOutput = [
-  'What the company does in one sentence.',
-  'Current price and recent movement.',
-  '2 to 3 recent headlines that matter.',
-  'One beginner note about risk or volatility.',
-];
 
 function App() {
   const [query, setQuery] = useState('AAPL');
@@ -99,11 +85,52 @@ function App() {
   const [result, setResult] = useState<ApiResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [marketSnapshot, setMarketSnapshot] = useState<MarketSnapshot | null>(null);
+  const [marketLoading, setMarketLoading] = useState(true);
+  const [marketError, setMarketError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadMarketSnapshot() {
+      setMarketLoading(true);
+      setMarketError('');
+
+      try {
+        const response = await fetch('/api/market-snapshot', { cache: 'no-store' });
+        const data = (await response.json()) as MarketSnapshot;
+
+        if (!active) return;
+
+        setMarketSnapshot(data);
+        if (!response.ok || !data.ok) {
+          setMarketError('message' in data ? data.message : 'Unable to load market snapshot.');
+        }
+      } catch (_error) {
+        if (!active) return;
+        setMarketError('Could not load the market snapshot.');
+        setMarketSnapshot({
+          ok: false,
+          mode: 'error',
+          message: 'Could not load the market snapshot.',
+        });
+      } finally {
+        if (active) setMarketLoading(false);
+      }
+    }
+
+    loadMarketSnapshot();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const cleaned = query.trim();
     if (!cleaned) return;
+
     const normalized = cleaned.toUpperCase();
     setSubmittedQuery(normalized);
     setLoading(true);
@@ -113,10 +140,8 @@ function App() {
       const response = await fetch(`/api/analyze?query=${encodeURIComponent(cleaned)}`);
       const data = (await response.json()) as ApiResult;
       setResult(data);
-      if (!response.ok) {
-        setErrorMessage(data && 'message' in data ? data.message : 'Unable to load stock data.');
-      } else if (data.ok === false) {
-        setErrorMessage(data.message);
+      if (!response.ok || !data.ok) {
+        setErrorMessage('message' in data ? data.message : 'Unable to load stock data.');
       }
     } catch (_error) {
       setErrorMessage('Could not reach the local API server.');
@@ -134,22 +159,21 @@ function App() {
   const liveResult = result && result.ok ? result : null;
   const statusCopy =
     loading
-      ? 'Analyzing TinyFish data...'
+      ? 'Getting the stock basics...'
       : liveResult
         ? `Live summary for ${liveResult.companyName}`
         : result && !result.ok && result.mode === 'config_required'
-          ? 'Add API keys to enable live results.'
-          : 'Run a stock query to see the report here.';
+          ? 'Add your TinyFish key to enable live results.'
+          : 'Search a stock to get a simple beginner summary.';
 
   return (
     <main className="page-shell">
-      <section className="hero">
+      <section className="hero hero-single">
         <div className="hero-copy">
-          <p className="eyebrow">Stock Agent Starter</p>
-          <h1>Ask for a stock, get a beginner-friendly summary.</h1>
+          <p className="eyebrow">Stock Search</p>
+          <h1>Search a stock and get the basics fast.</h1>
           <p className="hero-text">
-            This version uses TinyFish for live web extraction and OpenAI to explain
-            the result in simple language.
+            Quick, clear answers: what it is, what moved it, and what to keep an eye on.
           </p>
 
           <form className="query-form" onSubmit={handleSubmit}>
@@ -171,166 +195,223 @@ function App() {
             </div>
           </form>
 
+          <div className="suggestion-row" aria-label="Common stock ideas">
+            {commonStocks.map((symbol) => (
+              <button
+                key={symbol}
+                className="suggestion-pill"
+                type="button"
+                onClick={() => {
+                  setQuery(symbol);
+                  setSubmittedQuery(symbol);
+                }}
+              >
+                {symbol}
+              </button>
+            ))}
+          </div>
+
           <div className="stats-row" aria-label="Quick overview">
             <div className="stat-card">
               <span>01</span>
-              <p>Beginner explanation first</p>
+              <p>Fast stock snapshot</p>
             </div>
             <div className="stat-card">
               <span>02</span>
-              <p>TinyFish scrapes public web sources</p>
+              <p>TinyFish pulls live web data</p>
             </div>
             <div className="stat-card">
               <span>03</span>
-              <p>OpenAI turns it into a clean summary</p>
+              <p>Plain-English takeaways</p>
             </div>
           </div>
         </div>
 
-        <aside className="hero-panel" aria-label="Preview panel">
+        <aside className="hero-panel hero-panel-tight" aria-label="Summary panel">
           <div className="panel-top">
             <span className="panel-dot panel-dot-green" />
             <span className="panel-dot panel-dot-amber" />
             <span className="panel-dot panel-dot-blue" />
           </div>
           <div className="panel-content">
-            <p className="panel-label">Preview output</p>
-            <h2>{loading || liveResult ? submittedQuery : `${submittedQuery} beginner summary`}</h2>
+            <p className="panel-label">Summary</p>
+            <h2>{loading || liveResult ? submittedQuery : 'Ready when you are'}</h2>
             <p>{statusCopy}</p>
             {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
-            {liveResult ? (
-              <div className="result-stack">
-                <div className="metric-grid">
-                  <div className="result-metric">
-                    <span>Price</span>
-                    <strong>{formatCurrency(liveResult.price)}</strong>
+
+            <div className="panel-scroll">
+              {liveResult ? (
+                <div className="result-stack">
+                  <div className="metric-grid">
+                    <div className="result-metric">
+                      <span>Price</span>
+                      <strong>{formatCurrency(liveResult.price)}</strong>
+                    </div>
+                    <div className="result-metric">
+                      <span>Change</span>
+                      <strong>{formatChange(liveResult.change, liveResult.changePercent)}</strong>
+                    </div>
+                    <div className="result-metric">
+                      <span>Sector</span>
+                      <strong>{liveResult.sector}</strong>
+                    </div>
                   </div>
-                  <div className="result-metric">
-                    <span>Change</span>
-                    <strong>{formatChange(liveResult.change, liveResult.changePercent)}</strong>
+
+                  <div className="summary-box summary-box-fixed">
+                    <strong>Summary</strong>
+                    <p>{liveResult.beginnerSummary}</p>
                   </div>
-                  <div className="result-metric">
-                    <span>Sector</span>
-                    <strong>{liveResult.sector}</strong>
+
+                  <div className="summary-box summary-box-fixed">
+                    <strong>What stands out</strong>
+                    <ul className="mini-list">
+                      {liveResult.whyPeopleLikeIt.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="summary-box summary-box-fixed">
+                    <strong>Things to watch</strong>
+                    <ul className="mini-list">
+                      {liveResult.risks.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
                   </div>
                 </div>
-
-                <div className="summary-box">
-                  <strong>AI summary</strong>
-                  <p>{liveResult.aiSummary}</p>
-                </div>
-
-                <div className="news-list">
-                  <strong>Recent headlines</strong>
-                  {liveResult.news.length ? (
-                    liveResult.news.slice(0, 3).map((item) => (
-                      <a
-                        key={item.title}
-                        className="news-item"
-                        href={item.url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <span>{item.title}</span>
-                        <small>{item.source}</small>
-                      </a>
-                    ))
-                  ) : (
-                    <p>No recent headlines came back from the news source.</p>
-                  )}
-                </div>
-
-                <div className="news-list">
-                  <strong>Recent SEC filings</strong>
-                  {liveResult.filings.length ? (
-                    liveResult.filings.map((item) => (
-                      <a
-                        key={`${item.title}-${item.date}`}
-                        className="news-item"
-                        href={item.url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <span>{item.title}</span>
-                        <small>{item.date || item.formType || 'SEC filing'}</small>
-                      </a>
-                    ))
-                  ) : (
-                    <p>No recent filings came back from SEC EDGAR.</p>
-                  )}
-                </div>
-
-                <div className="link-row">
-                  {liveResult.links.map((link) => (
-                    <a key={link.label} className="card-link" href={link.href} target="_blank" rel="noreferrer">
-                      {link.label}
-                    </a>
+              ) : (
+                <div className="preview-grid">
+                  {summaryPreview.map((item) => (
+                    <article key={item.title} className="preview-card">
+                      <strong>{item.title}</strong>
+                      <p>{item.text}</p>
+                    </article>
                   ))}
                 </div>
-              </div>
-            ) : (
-              <div className="mini-metric">
-                <strong>What the model should return</strong>
-                <ul className="mini-list">
-                  {exampleOutput.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </aside>
       </section>
 
-      <section id="sources" className="section">
-        <div className="section-heading">
-          <p className="eyebrow">Data sources</p>
-          <h2>Use public web pages before social posts.</h2>
-          <p className="section-text">
-            These are the websites we should lean on when the stock agent looks up a
-            company.
-          </p>
+      <section className="market-overview-card" aria-label="Beginner market overview">
+        <div className="market-overview-top">
+          <div className="market-overview-copy">
+            <p className="eyebrow">Market Snapshot</p>
+            <h2>What the market looks like right now.</h2>
+            <p className="section-text">
+              A live read on the biggest stories moving stocks today.
+            </p>
+          </div>
         </div>
 
-        <div className="card-grid">
-          {dataSources.map((source) => (
-            <article key={source.title} className="info-card">
-              <h3>{source.title}</h3>
-              <p>{source.body}</p>
-              <a className="card-link" href={source.href} target="_blank" rel="noreferrer">
-                Open source
-              </a>
-            </article>
-          ))}
+        <div className="market-point-grid">
+          {marketLoading ? (
+            <>
+              <article className="market-point-card market-skeleton" />
+              <article className="market-point-card market-skeleton" />
+              <article className="market-point-card market-skeleton" />
+            </>
+          ) : marketSnapshot && marketSnapshot.ok ? (
+            <>
+              <article className="market-point-card market-point-card-tone">
+                <span>Market tone</span>
+                <div className="market-tone-pill">
+                  {marketSnapshot.tone} {formatToneScore(marketSnapshot.toneScore)}
+                </div>
+                <p className="market-tone-note">{marketSnapshot.summary}</p>
+              </article>
+              <article className="market-point-card">
+                <span>Beginner takeaway</span>
+                <p>{marketSnapshot.beginnerTakeaway}</p>
+              </article>
+              <article className="market-point-card">
+                <span>Watch list</span>
+                <p>{marketSnapshot.watchList.join(', ')}</p>
+              </article>
+            </>
+          ) : (
+            <>
+              <article className="market-point-card market-point-card-tone">
+                <span>Market tone</span>
+                <div className="market-tone-pill">Waiting on data</div>
+                <p className="market-tone-note">{marketError || 'No snapshot available right now.'}</p>
+              </article>
+              <article className="market-point-card">
+                <span>Beginner takeaway</span>
+                <p>Try again after the TinyFish key is set or the page refreshes.</p>
+              </article>
+              <article className="market-point-card">
+                <span>Watch list</span>
+                <p>SPY, QQQ, mega-cap tech, interest rates</p>
+              </article>
+            </>
+          )}
         </div>
-      </section>
 
-      <section id="workflow" className="section split-section">
-        <div className="section-heading">
-          <p className="eyebrow">Workflow</p>
-          <h2>Simple pipeline for the AI agent.</h2>
-          <p className="section-text">
-            We can wire this up in small steps so the app stays understandable while we
-            build.
-          </p>
+        <div className="market-overview-chart">
+          <div className="market-chart-header">
+            <strong>What’s driving things</strong>
+            <span>{marketSnapshot && marketSnapshot.ok ? `Updated ${formatTime(marketSnapshot.updatedAt)}` : 'Live headlines from TinyFish'}</span>
+          </div>
+          {marketLoading ? (
+            <div className="bar-chart">
+              <div className="bar-row market-skeleton" />
+              <div className="bar-row market-skeleton" />
+              <div className="bar-row market-skeleton" />
+            </div>
+          ) : marketSnapshot && marketSnapshot.ok ? (
+            <div className="bar-chart">
+              {marketSnapshot.themes.map((bar) => (
+                <div key={bar.label} className="bar-row">
+                  <div className="bar-labels">
+                    <span>{bar.label}</span>
+                    <small>{bar.score}%</small>
+                  </div>
+                  <div className="bar-track">
+                    <div className="bar-fill" style={{ width: `${bar.score}%` }} />
+                  </div>
+                  <p className="theme-note">{bar.note}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bar-chart">
+              <div className="bar-row">
+                <div className="bar-labels">
+                  <span>Market headlines</span>
+                  <small>offline</small>
+                </div>
+                <p className="theme-note">{marketError || 'No current headlines available.'}</p>
+              </div>
+            </div>
+          )}
+          <div className="headline-list">
+            <strong>Current headlines</strong>
+            {marketLoading ? (
+              <div className="headline-skeleton" />
+            ) : marketSnapshot && marketSnapshot.ok ? (
+              marketSnapshot.headlines.slice(0, 4).map((headline) => (
+                <a
+                  key={headline.title}
+                  className="headline-item"
+                  href={headline.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <span>{headline.title}</span>
+                  <small>
+                    {headline.source}
+                    {headline.published ? ` · ${headline.published}` : ''}
+                  </small>
+                </a>
+              ))
+            ) : (
+              <p className="chart-note">{marketError || 'No headlines available right now.'}</p>
+            )}
+          </div>
         </div>
-
-        <ol className="steps-list">
-          {workflowSteps.map((step) => (
-            <li key={step}>{step}</li>
-          ))}
-        </ol>
-      </section>
-
-      <section className="cta-banner">
-        <div>
-          <p className="eyebrow">Next build step</p>
-          <h2>Connect the form to live TinyFish data.</h2>
-        </div>
-        <p>
-          Once you add the TinyFish and OpenAI keys, this page can show a real
-          beginner stock report for any ticker.
-        </p>
       </section>
     </main>
   );
@@ -350,10 +431,25 @@ function formatCurrency(value: number | null) {
 function formatChange(change: number | null, percent: string | null) {
   if (change == null && !percent) return 'N/A';
 
-  const signedChange =
-    change == null
-      ? 'N/A'
-      : `${change > 0 ? '+' : ''}${change.toFixed(2)}`;
+  const signedChange = change == null ? 'N/A' : `${change > 0 ? '+' : ''}${change.toFixed(2)}`;
 
   return percent ? `${signedChange} (${percent})` : signedChange;
+}
+
+function formatToneScore(score: number) {
+  if (score >= 70) return ' - strong';
+  if (score >= 50) return ' - mixed';
+  return ' - cautious';
+}
+
+function formatTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'just now';
+
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
 }

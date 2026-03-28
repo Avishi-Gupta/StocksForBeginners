@@ -1,15 +1,14 @@
 import cors from 'cors';
 import 'dotenv/config';
 import express from 'express';
-import OpenAI from 'openai';
 
 const app = express();
 const PORT = Number(process.env.PORT || 8787);
 const TINYFISH_API_KEY = process.env.TINYFISH_API_KEY?.trim();
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY?.trim();
-const OPENAI_MODEL = process.env.OPENAI_MODEL?.trim() || 'gpt-4.1-mini';
+const MARKET_SNAPSHOT_TTL_MS = 10 * 60 * 1000;
 
-const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+let marketSnapshotCache = null;
+let marketSnapshotPromise = null;
 
 app.use(cors());
 app.use(express.json());
@@ -19,8 +18,20 @@ app.get('/api/health', (_req, res) => {
     ok: true,
     api: 'stocks-for-beginners',
     tinyFishConfigured: Boolean(TINYFISH_API_KEY),
-    openAiConfigured: Boolean(OPENAI_API_KEY),
   });
+});
+
+app.get('/api/market-snapshot', async (_req, res) => {
+  try {
+    const snapshot = await getMarketSnapshot();
+    res.json(snapshot);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Something went wrong.';
+    res.status(500).json({
+      ok: false,
+      message,
+    });
+  }
 });
 
 app.get('/api/analyze', async (req, res) => {
@@ -33,55 +44,28 @@ app.get('/api/analyze', async (req, res) => {
     });
   }
 
-  if (!TINYFISH_API_KEY || !OPENAI_API_KEY) {
+  if (!TINYFISH_API_KEY) {
     return res.json({
       ok: false,
       mode: 'config_required',
       query: rawQuery,
-      message:
-        'Add TINYFISH_API_KEY and OPENAI_API_KEY to your .env file to enable live stock summaries.',
+      message: 'Add TINYFISH_API_KEY to your .env file to enable live stock summaries.',
       missingKeys: {
-        tinyFish: !TINYFISH_API_KEY,
-        openAI: !OPENAI_API_KEY,
+        tinyFish: true,
       },
-      links: buildLinks(rawQuery, rawQuery.toUpperCase()),
     });
   }
 
   try {
-    const resolved = await resolveTicker(rawQuery);
-    const symbol = resolved.symbol || rawQuery.toUpperCase();
-    const companyName = resolved.companyName || rawQuery;
-
-    const [quoteData, newsData, secData] = await Promise.all([
-      runTinyFishAutomation({
-        url: `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`,
-        goal:
-          'Extract the current stock price, price change, percent change, volume, market cap, P/E ratio, 52-week range, and short business summary. Return JSON with keys price, change, changePercent, volume, marketCap, peRatio, range52Week, summary, companyName, sector, industry, website.',
-      }),
-      runTinyFishAutomation({
-        url: `https://news.google.com/search?q=${encodeURIComponent(`${companyName} ${symbol} stock`)}`,
-        goal:
-          'Extract the 5 most recent relevant headlines for this stock. Return JSON array with keys title, url, source, snippet, published.',
-      }),
-      runTinyFishAutomation({
-        url: `https://www.sec.gov/edgar/search/#/q=${encodeURIComponent(symbol)}`,
-        goal:
-          'Find the latest visible SEC filing titles and dates for this company. Return JSON array with keys title, date, url, formType. If nothing useful is visible, return an empty array.',
-      }),
-    ]);
+    const quoteData = await runTinyFishAutomation({
+      url: `https://finance.yahoo.com/lookup?s=${encodeURIComponent(rawQuery)}`,
+      goal:
+        'If the query looks like a stock ticker, open that ticker quote page. If the query is a company name, find the best matching ticker, open the quote page, and extract the current stock price, price change, percent change, market cap, P/E ratio, 52-week range, business summary, company name, sector, industry, and website. Also write a beginner-friendly summary that says why people may like the stock and what risks beginners should know. Return JSON with keys symbol, companyName, price, change, changePercent, marketCap, peRatio, range52Week, summary, beginnerSummary, whyPeopleLikeIt, risks, sector, industry, website.',
+    });
 
     const quote = normalizeQuote(quoteData);
-    const news = normalizeNews(newsData).slice(0, 5);
-    const filings = normalizeFilings(secData).slice(0, 3);
-    const aiSummary = await buildBeginnerSummary({
-      query: rawQuery,
-      symbol,
-      companyName: quote.companyName || companyName,
-      quote,
-      news,
-      filings,
-    });
+    const symbol = quote.symbol || normalizeSymbol(rawQuery);
+    const companyName = quote.companyName || rawQuery;
 
     res.json({
       ok: true,
@@ -92,18 +76,15 @@ app.get('/api/analyze', async (req, res) => {
       sector: quote.sector || 'Unknown',
       industry: quote.industry || 'Unknown',
       description: quote.summary || '',
-      website: quote.website || '',
       price: quote.price,
       change: quote.change,
       changePercent: quote.changePercent,
-      volume: quote.volume,
       marketCap: quote.marketCap,
       peRatio: quote.peRatio,
       range52Week: quote.range52Week,
-      aiSummary,
-      news,
-      filings,
-      links: buildLinks(rawQuery, symbol, quote.website),
+      beginnerSummary: quote.beginnerSummary || quote.summary || '',
+      whyPeopleLikeIt: quote.whyPeopleLikeIt,
+      risks: quote.risks,
       fetchedAt: new Date().toISOString(),
     });
   } catch (error) {
@@ -121,50 +102,8 @@ app.listen(PORT, () => {
   console.log(`Stock API listening on http://localhost:${PORT}`);
 });
 
-async function resolveTicker(query) {
-  if (!openai) {
-    return {
-      symbol: query.trim().toUpperCase(),
-      companyName: query.trim(),
-    };
-  }
-
-  const prompt = [
-    `Stock query: ${query}`,
-    'Return only JSON with keys symbol and companyName.',
-    'If the user already typed a ticker, keep it.',
-    'If the query is a company name, infer the most likely ticker.',
-    'Do not add markdown or explanation.',
-  ].join('\n');
-
-  const response = await openai.responses.create({
-    model: OPENAI_MODEL,
-    input: [
-      {
-        role: 'system',
-        content: [
-          {
-            type: 'input_text',
-            text: 'You identify public stock tickers from user queries and return strict JSON only.',
-          },
-        ],
-      },
-      {
-        role: 'user',
-        content: [{ type: 'input_text', text: prompt }],
-      },
-    ],
-  });
-
-  const parsed = safeParseJson(response.output_text);
-  return {
-    symbol: normalizeSymbol(parsed?.symbol || query),
-    companyName: typeof parsed?.companyName === 'string' ? parsed.companyName.trim() : query.trim(),
-  };
-}
-
 async function runTinyFishAutomation({ url, goal }) {
-  const response = await fetch('https://agent.tinyfish.ai/v1/runs/async', {
+  const response = await fetch('https://agent.tinyfish.ai/v1/automation/run', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -173,6 +112,7 @@ async function runTinyFishAutomation({ url, goal }) {
     body: JSON.stringify({
       url,
       goal,
+      browser_profile: 'lite',
     }),
   });
 
@@ -180,62 +120,118 @@ async function runTinyFishAutomation({ url, goal }) {
     throw new Error(`TinyFish request failed with status ${response.status}.`);
   }
 
-  const kickoff = await response.json();
-  const runId = kickoff.run_id || kickoff.id;
+  const data = await response.json();
+  const status = String(data.status || '').toUpperCase();
 
-  if (!runId) {
-    return kickoff.resultJson || kickoff.result || kickoff;
+  if (status === 'FAILED') {
+    throw new Error(data.error?.message || 'TinyFish automation failed.');
   }
 
-  return pollTinyFishRun(runId);
+  if (status && status !== 'COMPLETED') {
+    throw new Error(`TinyFish returned unexpected status ${status || 'UNKNOWN'}.`);
+  }
+
+  return data.result || data.resultJson || data;
 }
 
-async function pollTinyFishRun(runId) {
-  const maxAttempts = 20;
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const response = await fetch(`https://agent.tinyfish.ai/v1/runs/${encodeURIComponent(runId)}`, {
-      headers: {
-        'X-API-Key': TINYFISH_API_KEY || '',
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`TinyFish polling failed with status ${response.status}.`);
-    }
-
-    const data = await response.json();
-    const status = String(data.status || '').toUpperCase();
-
-    if (status === 'COMPLETED' || status === 'SUCCESS') {
-      return data.resultJson || data.result || data;
-    }
-
-    if (status === 'FAILED' || status === 'CANCELLED') {
-      throw new Error(data.error?.message || 'TinyFish automation failed.');
-    }
-
-    await delay(1500);
+async function getMarketSnapshot() {
+  const now = Date.now();
+  if (marketSnapshotCache && now - marketSnapshotCache.updatedAtMs < MARKET_SNAPSHOT_TTL_MS) {
+    return marketSnapshotCache.payload;
   }
 
-  throw new Error('TinyFish automation timed out.');
+  if (marketSnapshotPromise) {
+    return marketSnapshotPromise;
+  }
+
+  if (!TINYFISH_API_KEY) {
+    return {
+      ok: false,
+      mode: 'config_required',
+      message: 'Add TINYFISH_API_KEY to load the market snapshot.',
+    };
+  }
+
+  marketSnapshotPromise = (async () => {
+    const raw = await runTinyFishAutomation({
+      url: 'https://www.reuters.com/markets/',
+      goal:
+        'Extract the current market mood and the latest stock market headlines for the day. Return JSON with keys tone, toneScore, summary, beginnerTakeaway, themes, headlines, and watchList. ' +
+        'themes should be an array of objects with keys label, score, note. ' +
+        'headlines should be an array of objects with keys title, url, source, published. ' +
+        'watchList should be an array of short strings. ' +
+        'Keep the tone and summary beginner-friendly and based on the current headlines on the page.',
+    });
+
+    const snapshot = normalizeMarketSnapshot(raw);
+    const payload = {
+      ok: true,
+      ...snapshot,
+      updatedAt: new Date().toISOString(),
+    };
+
+    marketSnapshotCache = {
+      updatedAtMs: Date.now(),
+      payload,
+    };
+
+    return payload;
+  })();
+
+  try {
+    return await marketSnapshotPromise;
+  } finally {
+    marketSnapshotPromise = null;
+  }
 }
 
 function normalizeQuote(raw) {
   const source = unwrapData(raw);
 
   return {
+    symbol: source?.symbol || source?.ticker || '',
     price: toNumber(source?.price),
     change: toNumber(source?.change),
     changePercent: source?.changePercent || source?.change_percent || null,
-    volume: source?.volume ? String(source.volume) : null,
     marketCap: toNumber(source?.marketCap || source?.market_cap),
     peRatio: toNumber(source?.peRatio || source?.pe_ratio),
     range52Week: source?.range52Week || source?.range_52_week || null,
     summary: source?.summary || source?.description || '',
+    beginnerSummary: source?.beginnerSummary || source?.beginner_summary || source?.summary || '',
+    whyPeopleLikeIt: normalizeStringList(source?.whyPeopleLikeIt || source?.why_people_like_it),
+    risks: normalizeStringList(source?.risks),
     companyName: source?.companyName || source?.name || '',
     sector: source?.sector || '',
     industry: source?.industry || '',
-    website: source?.website || '',
+  };
+}
+
+function normalizeMarketSnapshot(raw) {
+  const source = unwrapData(raw);
+  const rawThemes = Array.isArray(source?.themes) ? source.themes : [];
+  const rawHeadlines = Array.isArray(source?.headlines) ? source.headlines : [];
+
+  return {
+    tone: String(source?.tone || 'Mixed').trim(),
+    toneScore: clampNumber(toNumber(source?.toneScore), 0, 100, 55),
+    summary: String(source?.summary || source?.beginnerSummary || '').trim(),
+    beginnerTakeaway: String(source?.beginnerTakeaway || source?.summary || '').trim(),
+    themes: rawThemes
+      .map((theme) => ({
+        label: String(theme?.label || 'Theme').trim(),
+        score: clampNumber(toNumber(theme?.score), 0, 100, 50),
+        note: String(theme?.note || '').trim(),
+      }))
+      .filter((item) => item.label),
+    headlines: rawHeadlines
+      .map((item) => ({
+        title: String(item?.title || '').trim(),
+        url: String(item?.url || '').trim(),
+        source: String(item?.source || 'Reuters').trim(),
+        published: String(item?.published || '').trim(),
+      }))
+      .filter((item) => item.title),
+    watchList: normalizeStringList(source?.watchList || source?.watch_list),
   };
 }
 
@@ -248,7 +244,6 @@ function normalizeNews(raw) {
       title: item.title || 'Untitled headline',
       url: item.url || item.link || '',
       source: item.source || item.publisher || 'Unknown source',
-      snippet: item.snippet || item.summary || '',
       published: item.published || item.date || '',
     }))
     .filter((item) => item.title);
@@ -268,91 +263,6 @@ function normalizeFilings(raw) {
     .filter((item) => item.title);
 }
 
-async function buildBeginnerSummary({ query, symbol, companyName, quote, news, filings }) {
-  if (!openai) {
-    return `Beginner summary for ${query} (${symbol})\n\nAdd OPENAI_API_KEY to generate a polished explanation.`;
-  }
-
-  const prompt = [
-    `Stock query: ${query}`,
-    `Ticker: ${symbol}`,
-    `Company: ${companyName || 'Unknown'}`,
-    `Price: ${formatMaybe(quote.price)}`,
-    `Change: ${formatMaybe(quote.change)}`,
-    `Change percent: ${quote.changePercent || 'Unknown'}`,
-    `Market cap: ${formatMaybe(quote.marketCap)}`,
-    `P/E ratio: ${formatMaybe(quote.peRatio)}`,
-    `52-week range: ${quote.range52Week || 'Unknown'}`,
-    `Sector: ${quote.sector || 'Unknown'}`,
-    `Industry: ${quote.industry || 'Unknown'}`,
-    `Business summary: ${quote.summary || 'No business summary extracted.'}`,
-    '',
-    `Recent headlines:\n${news.length ? news.map((item) => `- ${item.title} (${item.source})`).join('\n') : '- None found.'}`,
-    '',
-    `Recent SEC filings:\n${filings.length ? filings.map((item) => `- ${item.title} (${item.date || 'unknown date'})`).join('\n') : '- None found.'}`,
-    '',
-    'Write a beginner-friendly summary with these sections:',
-    '1. What this company does',
-    '2. What the stock is doing right now',
-    '3. Why it may be moving',
-    '4. One beginner risk to watch',
-    'Keep it simple, calm, and non-promotional. Do not give direct investment advice.',
-  ].join('\n');
-
-  const response = await openai.responses.create({
-    model: OPENAI_MODEL,
-    input: [
-      {
-        role: 'system',
-        content: [
-          {
-            type: 'input_text',
-            text: 'You explain stocks to beginners in clear, practical language.',
-          },
-        ],
-      },
-      {
-        role: 'user',
-        content: [{ type: 'input_text', text: prompt }],
-      },
-    ],
-  });
-
-  return response.output_text?.trim() || 'No summary was returned.';
-}
-
-function buildLinks(query, symbol, website = '') {
-  const encodedQuery = encodeURIComponent(query);
-  const encodedSymbol = encodeURIComponent(symbol);
-  const links = [
-    {
-      label: 'Yahoo Finance',
-      href: `https://finance.yahoo.com/quote/${encodedSymbol}`,
-    },
-    {
-      label: 'SEC EDGAR search',
-      href: `https://www.sec.gov/edgar/search/#/q=${encodedQuery}`,
-    },
-    {
-      label: 'Google News search',
-      href: `https://news.google.com/search?q=${encodedSymbol}%20stock`,
-    },
-    {
-      label: 'X search',
-      href: `https://x.com/search?q=${encodedSymbol}%20stock&src=typed_query`,
-    },
-  ];
-
-  if (website) {
-    links.unshift({
-      label: 'Company website',
-      href: website,
-    });
-  }
-
-  return links;
-}
-
 function normalizeSymbol(value) {
   return String(value || '')
     .trim()
@@ -360,19 +270,28 @@ function normalizeSymbol(value) {
     .replace(/[^A-Z0-9.\-]/g, '');
 }
 
-function safeParseJson(text) {
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    const match = String(text).match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[0]);
-    } catch {
-      return null;
-    }
+function normalizeStringList(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
   }
+
+  if (typeof value === 'string') {
+    return value
+      .split('\n')
+      .map((item) => item.replace(/^[-*]\s*/, '').trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function clampNumber(value, min, max, fallback) {
+  const safeValue = Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, safeValue));
+}
+
+function looksLikeSymbol(value) {
+  return /^[A-Z0-9.\-]{1,8}$/.test(value) && !value.includes(' ');
 }
 
 function unwrapData(raw) {
@@ -380,16 +299,12 @@ function unwrapData(raw) {
   return raw.resultJson || raw.result || raw.data || raw;
 }
 
-function formatMaybe(value) {
-  if (value == null || value === '') return 'Unknown';
-  return String(value);
+function parsePercent(value) {
+  const parsed = Number(String(value).replace('%', ''));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function toNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
