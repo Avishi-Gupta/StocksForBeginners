@@ -146,7 +146,13 @@ export default function App() {
         </nav>
       </header>
 
-      {view === 'stocks' ? <StockSummaryPage /> : <EventHistoryPage />}
+      <section className={view === 'stocks' ? 'page-stage page-stage-active' : 'page-stage page-stage-hidden'} aria-hidden={view !== 'stocks'}>
+        <StockSummaryPage />
+      </section>
+
+      <section className={view === 'history' ? 'page-stage page-stage-active' : 'page-stage page-stage-hidden'} aria-hidden={view !== 'history'}>
+        <EventHistoryPage />
+      </section>
     </main>
   );
 }
@@ -252,7 +258,7 @@ function StockSummaryPage() {
 
   return (
     <>
-      <section className="hero hero-single">
+      <section className="hero hero-single" id="stocks">
         <div className="hero-copy">
           <p className="eyebrow">Stock Search</p>
           <h1>Search a stock and get the basics fast.</h1>
@@ -691,7 +697,7 @@ function EventHistoryPage() {
 
   return (
     <>
-      <section className="history-hero">
+      <section className="history-hero" id="history">
         <div className="history-shell">
           <p className="eyebrow">Event History Lab</p>
           <h1>Study past shocks before the next one hits.</h1>

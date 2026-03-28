@@ -40,6 +40,14 @@ a {
   padding: 32px 0 56px;
 }
 
+.page-stage {
+  display: block;
+}
+
+.page-stage-hidden {
+  display: none;
+}
+
 .top-nav {
   display: flex;
   justify-content: space-between;
