@@ -48,6 +48,14 @@ type MarketSnapshot =
       message: string;
     };
 
+type PortfolioMarketStats = {
+  tone: string;
+  toneScore: number;
+  leadingTheme: string;
+  leadingThemeScore: number;
+  headlineCount: number;
+};
+
 type ApiResult =
   | {
       ok: true;
@@ -88,6 +96,8 @@ function App() {
   const [marketSnapshot, setMarketSnapshot] = useState<MarketSnapshot | null>(null);
   const [marketLoading, setMarketLoading] = useState(true);
   const [marketError, setMarketError] = useState('');
+  const [riskTolerance, setRiskTolerance] = useState<'Low' | 'Medium' | 'High'>('Medium');
+  const [budget, setBudget] = useState('500');
 
   useEffect(() => {
     let active = true;
@@ -160,6 +170,9 @@ function App() {
   const investmentSimulator = liveResult
     ? buildInvestmentSimulator(liveResult.price, liveResult.range52Week)
     : null;
+  const budgetValue = Number(budget);
+  const portfolioMarketStats = buildPortfolioMarketStats(marketSnapshot);
+  const portfolioPlan = buildPortfolioPlan(riskTolerance, budgetValue, portfolioMarketStats);
   const statusCopy =
     loading
       ? 'Getting the stock basics...'
@@ -449,6 +462,90 @@ function App() {
           </div>
         </div>
       </section>
+
+      <section className="starter-builder-card" aria-label="Portfolio starter builder">
+        <div className="starter-builder-header">
+          <div>
+            <p className="eyebrow">Portfolio Starter</p>
+            <h2>Build a simple starter plan.</h2>
+            <p className="section-text">
+              Pick your risk level and budget, and get a starter split shaped by live market stats.
+            </p>
+          </div>
+        </div>
+
+        <div className="portfolio-live-stats">
+          <article className="portfolio-mini-stat">
+            <span>Market tone</span>
+            <strong>
+              {portfolioMarketStats ? `${portfolioMarketStats.tone} (${formatToneScore(portfolioMarketStats.toneScore)})` : 'Waiting on TinyFish'}
+            </strong>
+          </article>
+          <article className="portfolio-mini-stat">
+            <span>Top theme</span>
+            <strong>
+              {portfolioMarketStats
+                ? `${portfolioMarketStats.leadingTheme} (${portfolioMarketStats.leadingThemeScore}%)`
+                : 'Loading...'}
+            </strong>
+          </article>
+          <article className="portfolio-mini-stat">
+            <span>Headlines</span>
+            <strong>
+              {portfolioMarketStats ? `${portfolioMarketStats.headlineCount} seen today` : 'Loading...'}
+            </strong>
+          </article>
+        </div>
+
+        <form className="starter-builder-form">
+          <label className="builder-field">
+            <span>Risk tolerance</span>
+            <select value={riskTolerance} onChange={(event) => setRiskTolerance(event.target.value as 'Low' | 'Medium' | 'High')}>
+              <option value="Low">Low</option>
+              <option value="Medium">Medium</option>
+              <option value="High">High</option>
+            </select>
+          </label>
+
+          <label className="builder-field">
+            <span>Budget</span>
+            <div className="budget-input-wrap">
+              <span>$</span>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={budget}
+                onChange={(event) => setBudget(event.target.value)}
+                placeholder="500"
+              />
+            </div>
+          </label>
+        </form>
+
+        <div className="portfolio-plan-card">
+          <div className="portfolio-plan-top">
+            <strong>Suggested allocation</strong>
+            <span>{Number.isFinite(budgetValue) ? formatCurrency(budgetValue) : '$0'}</span>
+          </div>
+
+          <div className="portfolio-allocation-grid">
+            {portfolioPlan.map((item) => (
+              <article key={item.label} className="portfolio-allocation-card">
+                <div className="portfolio-allocation-row">
+                  <span>{item.label}</span>
+                  <strong>{item.percent}%</strong>
+                </div>
+                <p>{formatCurrency(item.amount)}</p>
+              </article>
+            ))}
+          </div>
+
+          <p className="portfolio-note">
+            This is a simple starter split, not personal financial advice.
+          </p>
+        </div>
+      </section>
     </main>
   );
 }
@@ -522,4 +619,94 @@ function parsePriceLikeNumber(value: string) {
   const cleaned = value.replace(/[^0-9.-]/g, '');
   const parsed = Number(cleaned);
   return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function buildPortfolioPlan(
+  riskTolerance: 'Low' | 'Medium' | 'High',
+  budget: number,
+  marketStats: PortfolioMarketStats | null,
+) {
+  const safeBudget = Number.isFinite(budget) && budget > 0 ? budget : 0;
+  const basePlans = {
+    Low: { ETFs: 55, 'Safe stocks': 30, Tech: 15 },
+    Medium: { ETFs: 40, 'Safe stocks': 30, Tech: 30 },
+    High: { ETFs: 25, 'Safe stocks': 25, Tech: 50 },
+  } as const;
+
+  const weights = { ...basePlans[riskTolerance] };
+  const toneScore = marketStats?.toneScore ?? 55;
+  const leadingTheme = marketStats?.leadingTheme.toLowerCase() ?? '';
+
+  if (toneScore >= 70) {
+    weights.Tech += 6;
+    weights.ETFs -= 3;
+    weights['Safe stocks'] -= 3;
+  } else if (toneScore <= 45) {
+    weights.ETFs += 8;
+    weights['Safe stocks'] += 5;
+    weights.Tech -= 13;
+  } else {
+    weights.ETFs += 2;
+    weights['Safe stocks'] += 2;
+    weights.Tech -= 4;
+  }
+
+  if (leadingTheme.includes('tech') || leadingTheme.includes('ai') || leadingTheme.includes('chip')) {
+    weights.Tech += 5;
+    weights.ETFs -= 2;
+    weights['Safe stocks'] -= 3;
+  }
+
+  if (leadingTheme.includes('rate') || leadingTheme.includes('bond') || leadingTheme.includes('inflation')) {
+    weights.ETFs += 5;
+    weights['Safe stocks'] += 4;
+    weights.Tech -= 9;
+  }
+
+  const normalized = normalizePortfolioWeights(weights);
+
+  return [
+    { label: 'ETFs', percent: normalized.ETFs },
+    { label: 'Tech', percent: normalized.Tech },
+    { label: 'Safe stocks', percent: normalized['Safe stocks'] },
+  ].map((item) => ({
+    ...item,
+    amount: (safeBudget * item.percent) / 100,
+  }));
+}
+
+function buildPortfolioMarketStats(snapshot: MarketSnapshot | null): PortfolioMarketStats | null {
+  if (!snapshot || !snapshot.ok) return null;
+
+  const leadingTheme = snapshot.themes.reduce(
+    (best, theme) => (theme.score > best.score ? theme : best),
+    snapshot.themes[0] || { label: snapshot.tone, score: snapshot.toneScore },
+  );
+
+  return {
+    tone: snapshot.tone,
+    toneScore: snapshot.toneScore,
+    leadingTheme: leadingTheme.label,
+    leadingThemeScore: leadingTheme.score,
+    headlineCount: snapshot.headlines.length,
+  };
+}
+
+function normalizePortfolioWeights(weights: { ETFs: number; Tech: number; 'Safe stocks': number }) {
+  const positive = {
+    ETFs: Math.max(10, weights.ETFs),
+    Tech: Math.max(10, weights.Tech),
+    'Safe stocks': Math.max(10, weights['Safe stocks']),
+  };
+  const total = positive.ETFs + positive.Tech + positive['Safe stocks'];
+
+  const etfs = Math.round((positive.ETFs / total) * 100);
+  const tech = Math.round((positive.Tech / total) * 100);
+  const safeStocks = 100 - etfs - tech;
+
+  return {
+    ETFs: etfs,
+    Tech: tech,
+    'Safe stocks': safeStocks,
+  };
 }

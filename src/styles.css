@@ -800,6 +800,170 @@ h1 {
     rgba(9, 17, 31, 0.68);
 }
 
+.starter-builder-card {
+  margin-top: 28px;
+  padding: 24px;
+  border-radius: 28px;
+  backdrop-filter: blur(18px);
+  background: rgba(9, 17, 31, 0.64);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.22);
+  display: grid;
+  gap: 18px;
+}
+
+.starter-builder-header {
+  display: grid;
+  gap: 8px;
+}
+
+.portfolio-live-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.portfolio-mini-stat {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  display: grid;
+  gap: 6px;
+}
+
+.portfolio-mini-stat span {
+  color: #9fffb9;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.portfolio-mini-stat strong {
+  color: #ecf4ff;
+  font-size: 0.98rem;
+  line-height: 1.45;
+}
+
+.starter-builder-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.builder-field {
+  display: grid;
+  gap: 8px;
+}
+
+.builder-field span {
+  color: rgba(236, 244, 255, 0.84);
+  font-size: 0.9rem;
+}
+
+.builder-field select,
+.budget-input-wrap {
+  border: 1px solid rgba(174, 197, 223, 0.18);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #ecf4ff;
+}
+
+.builder-field select {
+  padding: 14px 16px;
+  font: inherit;
+  outline: none;
+}
+
+.budget-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+}
+
+.budget-input-wrap span {
+  color: #8ee7b1;
+  font-weight: 700;
+}
+
+.budget-input-wrap input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #ecf4ff;
+  font: inherit;
+  padding: 14px 0;
+  outline: none;
+}
+
+.portfolio-plan-card {
+  padding: 20px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  display: grid;
+  gap: 16px;
+}
+
+.portfolio-plan-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.portfolio-plan-top strong {
+  font-size: 1.05rem;
+}
+
+.portfolio-plan-top span {
+  color: rgba(236, 244, 255, 0.72);
+}
+
+.portfolio-allocation-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.portfolio-allocation-card {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  display: grid;
+  gap: 10px;
+}
+
+.portfolio-allocation-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.portfolio-allocation-row span {
+  font-weight: 700;
+}
+
+.portfolio-allocation-row strong {
+  color: #9fffb9;
+}
+
+.portfolio-allocation-card p {
+  margin: 0;
+  color: rgba(236, 244, 255, 0.76);
+}
+
+.portfolio-note {
+  margin: 0;
+  color: rgba(236, 244, 255, 0.66);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
 @media (max-width: 900px) {
   .hero,
   .split-section,
@@ -835,6 +999,15 @@ h1 {
 
   .market-point-card {
     min-height: auto;
+  }
+
+  .starter-builder-form,
+  .portfolio-allocation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolio-live-stats {
+    grid-template-columns: 1fr;
   }
 
   .query-row {
