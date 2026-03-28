@@ -13,8 +13,6 @@ Make sure Node.js 20 or newer is installed first.
 2. Create a `.env` file in the project root:
 ```bash
 TINYFISH_API_KEY=your_tinyfish_key
-OPENAI_API_KEY=your_openai_key
-OPENAI_MODEL=gpt-4.1-mini
 PORT=8787
 ```
 
@@ -29,4 +27,4 @@ The frontend runs on Vite and proxies `/api/*` requests to the local API server.
 
 - Accepts a stock name or ticker
 - Uses TinyFish to scrape public stock, news, and filing pages
-- Uses OpenAI to explain the result in beginner-friendly language
+- Builds a simple beginner summary with risks, basics, and recent headlines
